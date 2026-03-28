@@ -1,0 +1,19 @@
+{
+    "positive": [
+        {"name": "Citizen", "threshold": 100},
+        {"name": "Contributor", "threshold": 250},
+        {"name": "Associate", "threshold": 500},
+        {"name": "Trusted", "threshold": 1000},
+        {"name": "Model Citizen", "threshold": 2000},
+        {"name": "Loyalist", "threshold": 4000},
+        {"name": "High Loyalist", "threshold": 8000},
+        {"name": "Vanguard", "threshold": 15000},
+        {"name": "Elite", "threshold": 30000},
+        {"name": "Exalted Paragon", "threshold": 50000}
+    ],
+    "negative": [
+        {"name": "Suspicious Element", "threshold": -100},
+        {"name": "Social Outcast", "threshold": -500},
+        {"name": "Enemy of the State", "threshold": -1000}
+    ]
+}

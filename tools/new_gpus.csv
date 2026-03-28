@@ -1,0 +1,31 @@
+name,manufacturer,category,year,hashrate,power_draw,rarity,description
+GeForce GTX 1080,NVIDIA,GPU,2016,28.5 MH/s,180 W,uncommon,"Launch-day gamer darling; sips power compared to modern hogs, still smug about its 8 GB of GDDR5X."
+GeForce RTX 3080,NVIDIA,GPU,2020,95.0 MH/s,320 W,rare,Turns electricity directly into heat and imaginary coins; may cause spontaneous PSU existential crises.
+GeForce RTX 3090,NVIDIA,GPU,2020,120.0 MH/s,350 W,rare,"Triple-slot monster; sounds like a leaf blower, warms a small apartment while mining regrets."
+Radeon RX 580,AMD,GPU,2017,30.0 MH/s,185 W,common,Former mining farm workhorse; smells faintly of stale thermal paste and broken promises.
+Radeon RX 5700 XT,AMD,GPU,2019,54.0 MH/s,225 W,uncommon,Overclock it for +10% hashrate or +100% fan noise; whichever comes first.
+GeForce GTX 1060 6GB,NVIDIA,GPU,2016,19.0 MH/s,120 W,common,Budget hero of 2016; still found in gamer rigs and very optimistic mining guides.
+GeForce GTX 1070,NVIDIA,GPU,2016,27.0 MH/s,150 W,uncommon,"Efficient little miner; hoarded in 2017, forgotten in 2023, reborn as dumpster treasure."
+GeForce GTX 1660 Super,NVIDIA,GPU,2019,26.0 MH/s,125 W,common,"No RT, no Tensor, no nonsense; quietly prints coins while newer cards chase ray-traced reflections."
+Radeon RX Vega 64,AMD,GPU,2017,42.0 MH/s,295 W,rare,Runs hot loud and slightly angry; comes with free central heating for your server rack.
+GeForce RTX 2060,NVIDIA,GPU,2019,26.0 MH/s,160 W,common,Entry-level ray tracer; insists it's 'future proof' while wheezing through modern workloads.
+GeForce RTX 3070,NVIDIA,GPU,2020,60.0 MH/s,220 W,uncommon,All the hashrate of a 2080 Ti without the prestige; perfect for a mid-tier junkyard rig.
+GeForce RTX 3060 Ti,NVIDIA,GPU,2020,58.0 MH/s,200 W,uncommon,"Silicon sweet spot; miners loved it, gamers hated that miners loved it."
+Radeon RX 470,AMD,GPU,2016,24.0 MH/s,120 W,common,Once lived 24/7 in a smoky warehouse; now retired to your trash-to-treasure mining contraption.
+GeForce GTX 970,NVIDIA,GPU,2014,15.0 MH/s,145 W,common,"Advertised 4 GB, actually 3.5 GB plus a grumpy annex; still good enough for budget coin dust."
+GeForce GTX 780 Ti,NVIDIA,GPU,2013,10.0 MH/s,250 W,rare,Kepler hotrod; burns watts like it's 2013 and nobody pays the power bill.
+Radeon R9 290X,AMD,GPU,2013,25.0 MH/s,275 W,rare,Reference cooler doubles as a space heater; fans scream in GCN dialect when under load.
+GeForce GTX 460,NVIDIA,GPU,2010,3.0 MH/s,160 W,uncommon,Fermi relic; produces more nostalgia than hashes but still tries its little 40 nm heart out.
+Radeon HD 7970,AMD,GPU,2011,14.0 MH/s,250 W,uncommon,First 28 nm beast; early crypto war criminal responsible for many melted PCIe power cables.
+GeForce 8800 GTX,NVIDIA,GPU,2006,1.2 MH/s,155 W,rare,The original GPU rock star; old enough to vote still hot enough to char the PCB.
+GeForce 4 Ti 4600,NVIDIA,GPU,2002,0.05 MH/s,75 W,rare,Prefers rendering DirectX 8 shaders to mining; sulks if asked to do anything blockchain-related.
+Radeon 9700 Pro,AMD,GPU,2002,0.06 MH/s,65 W,rare,Ancient yet proud; produces so few hashes they might be considered collectible.
+Voodoo2 12MB,3dfx,GPU,1998,0.005 MH/s,45 W,legendary,3dfx shrine piece; cannot mine but increases your retro cred hashrate dramatically.
+Matrox G400,Matrox,GPU,1999,0.004 MH/s,30 W,rare,Beautiful 2D terrible miner; insists on perfect signal quality while grinding out single-digit hashes.
+Intel Arc A770,Intel,GPU,2022,54.0 MH/s,225 W,uncommon,New kid with quirky drivers; occasionally forgets it's mining and decides to recompile its shaders instead.
+GeForce RTX 4090,NVIDIA,GPU,2022,180.0 MH/s,450 W,legendary,"Converts kilowatts directly into bragging rights; might bend your case, your rails, and local building codes."
+Radeon RX 7900 XTX,AMD,GPU,2022,150.0 MH/s,355 W,rare,"Chiplet chaos engine; mines hard, games harder, occasionally attempts to escape its own cooler."
+GeForce RTX 2080 Ti,NVIDIA,GPU,2018,60.0 MH/s,250 W,rare,Once a flagship now a very fancy space heater with delusions of grandeur.
+Titan V,NVIDIA,GPU,2017,70.0 MH/s,250 W,legendary,"Volta-powered research card; horrifically expensive, suspiciously comfortable living in a dusty lab rack."
+GeForce GTX 750 Ti,NVIDIA,GPU,2014,7.0 MH/s,60 W,common,Early Maxwell efficiency demo; perfect for ultra-budget rigs and very patient miners.
+Radeon HD 5850,AMD,GPU,2009,8.0 MH/s,151 W,uncommon,Prehistoric mining hero; still tastes faintly of 2011 Bitcoin mania and cheap PSUs.
