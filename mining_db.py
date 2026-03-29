@@ -94,6 +94,45 @@ class MiningDB:
                 )
             """)
 
+            # ── State Bureaucracy Tables ──────────────────────────────────────
+            # Business Accountability & Planning Act compliance infrastructure.
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS permits (
+                    user_id     INTEGER NOT NULL,
+                    guild_id    INTEGER NOT NULL,
+                    tier        INTEGER NOT NULL DEFAULT 0,
+                    expires_at  REAL    NOT NULL DEFAULT 0,
+                    last_score  REAL    NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+
+            # Daily CPRM contributions — one row per taxable collection event.
+            # Cleared after each midnight redistribution.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cprm_pool (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id         INTEGER NOT NULL,
+                    guild_id        INTEGER NOT NULL,
+                    amount          REAL    NOT NULL,
+                    contributed_at  REAL    NOT NULL
+                )
+            """)
+
+            # Permanent record of each daily decree for auditing / flavour.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cprm_history (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id            INTEGER NOT NULL,
+                    date                TEXT    NOT NULL,
+                    total_collected     REAL    NOT NULL,
+                    state_overhead      REAL    NOT NULL,
+                    total_redistributed REAL    NOT NULL,
+                    redistributed_at    REAL    NOT NULL
+                )
+            """)
+
             conn.commit()
 
     # ── Inventory ────────────────────────────────────────────────────────
@@ -472,3 +511,77 @@ class MiningDB:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    # ── Permits (Business Accountability & Planning Act) ──────────────────
+
+    def get_permit(self, user_id, guild_id):
+        """Return (tier, expires_at, last_score) or (0, 0, 0) if none on record."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT tier, expires_at, last_score FROM permits WHERE user_id = ? AND guild_id = ?",
+                (user_id, guild_id),
+            ).fetchone()
+            return row if row else (0, 0, 0.0)
+
+    def upsert_permit(self, user_id, guild_id, tier, expires_at, last_score):
+        """Create or update a permit record."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO permits (user_id, guild_id, tier, expires_at, last_score)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, guild_id) DO UPDATE SET
+                       tier       = EXCLUDED.tier,
+                       expires_at = EXCLUDED.expires_at,
+                       last_score = EXCLUDED.last_score""",
+                (user_id, guild_id, tier, expires_at, last_score),
+            )
+            conn.commit()
+
+    # ── CPRM Pool (Computational Prosperity Redistribution Mechanism) ─────
+
+    def add_cprm_contribution(self, user_id, guild_id, amount):
+        """Log a CPRM contribution to the daily pool."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO cprm_pool (user_id, guild_id, amount, contributed_at) VALUES (?, ?, ?, ?)",
+                (user_id, guild_id, amount, time.time()),
+            )
+            conn.commit()
+
+    def get_cprm_pool(self, guild_id):
+        """Return all pending contributions for a guild: [(user_id, total_contributed)]."""
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT user_id, SUM(amount) FROM cprm_pool
+                   WHERE guild_id = ? GROUP BY user_id""",
+                (guild_id,),
+            ).fetchall()
+            return rows  # [(user_id, total), ...]
+
+    def get_cprm_pool_total(self, guild_id):
+        """Return the total BTC in the pool for this guild today."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM cprm_pool WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone()
+            return row[0] if row else 0.0
+
+    def clear_cprm_pool(self, guild_id):
+        """Wipe the pool after redistribution."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM cprm_pool WHERE guild_id = ?", (guild_id,))
+            conn.commit()
+
+    def log_cprm_history(self, guild_id, date_str, total_collected,
+                         state_overhead, total_redistributed):
+        """Record the outcome of a daily redistribution."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO cprm_history
+                   (guild_id, date, total_collected, state_overhead, total_redistributed, redistributed_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (guild_id, date_str, total_collected, state_overhead,
+                 total_redistributed, time.time()),
+            )
+            conn.commit()

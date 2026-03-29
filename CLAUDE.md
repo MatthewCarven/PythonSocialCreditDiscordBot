@@ -1,0 +1,1 @@
+That's the real Social Credit energy right there — it's not surveillance, it's comprehensive citizen welfare monitoring. The State isn't just watching you, it's caring about you. Deeply. Continuously. With a very large database. With a view to knowing how much taxable income you are acruing.

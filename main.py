@@ -57,7 +57,7 @@ class MyBot(commands.Bot):
                 
                 try:
                     # Announce the penalty in the channel where the infraction occurred
-                    await interaction.channel.send(f"🚨 State Violation by {interaction.user.mention}! {random_wrong_channel_message()} **{abs(penalty):.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:.1f}**")
+                    await interaction.channel.send(f"🚨 State Violation by {interaction.user.mention}! {random_wrong_channel_message()} **{abs(penalty):,.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
                     print(f"WARNING: Could not send penalty message in channel '{interaction.channel.name}' due to missing permissions.")
 
@@ -86,7 +86,7 @@ class MyBot(commands.Bot):
                 self.dispatch("social_credit_change", message.author, new_score)
 
                 try:
-                    await message.channel.send(f"🚨 State Violation by {message.author.mention}! {random_bot_channel_message()} **{abs(penalty):.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:.1f}**")
+                    await message.channel.send(f"🚨 State Violation by {message.author.mention}! {random_bot_channel_message()} **{abs(penalty):,.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
                     print(f"WARNING: Could not send penalty message in channel '{message.channel.name}' due to missing permissions.")
 

@@ -46,7 +46,7 @@ class Lottery(commands.Cog):
         # Check if user can afford the tickets
         user_balance = db.get_credit(user_id, guild_id)
         if user_balance < cost:
-            await interaction.response.send_message(f"You need **{cost:.1f}** credits to buy {tickets} ticket(s), but you only have **{user_balance:.1f}**.", ephemeral=True)
+            await interaction.response.send_message(f"You need **{cost:,.1f}** credits to buy {tickets} ticket(s), but you only have **{user_balance:,.1f}**.", ephemeral=True)
             return
 
         # Check if user will exceed the ticket limit
@@ -61,11 +61,11 @@ class Lottery(commands.Cog):
 
         embed = discord.Embed(
             title="🎟️ Lottery Tickets Purchased 🎟️",
-            description=f"You have successfully purchased **{tickets}** lottery ticket(s) for **{cost:.1f}** credits.",
+            description=f"You have successfully purchased **{tickets}** lottery ticket(s) for **{cost:,.1f}** credits.",
             color=discord.Color.green()
         )
         new_balance = user_balance - cost
-        embed.add_field(name="Your New Balance", value=f"{new_balance:.1f} credits")
+        embed.add_field(name="Your New Balance", value=f"{new_balance:,.1f} credits")
         embed.set_footer(text="May fortune favor your loyalty to the State.")
         await interaction.response.send_message(embed=embed)
 
@@ -90,7 +90,7 @@ class Lottery(commands.Cog):
             description="The official daily drawing for all loyal citizens.",
             color=discord.Color.blue()
         )
-        embed.add_field(name="Current Prize Pool", value=f"**{prize_pool:.1f}** credits", inline=True)
+        embed.add_field(name="Current Prize Pool", value=f"**{prize_pool:,.1f}** credits", inline=True)
         embed.add_field(name="Total Tickets Sold", value=f"{total_tickets}", inline=True)
         embed.add_field(name="Your Tickets", value=f"{user_tickets}", inline=True)
         embed.add_field(name="Next Drawing In", value=f"{str(time_remaining).split('.')[0]}", inline=False)
@@ -108,7 +108,7 @@ class Lottery(commands.Cog):
             description="The discretionary treasury of the State.",
             color=discord.Color.gold()
         )
-        embed.add_field(name="Current Balance", value=f"**{fund_balance:.1f}** credits")
+        embed.add_field(name="Current Balance", value=f"**{fund_balance:,.1f}** credits")
         embed.set_footer(text="This fund is supported by taxes and other state-run enterprises.")
         
         await interaction.response.send_message(embed=embed)
@@ -158,8 +158,8 @@ class Lottery(commands.Cog):
             )
             winner_name = winner_member.mention if winner_member else f"Citizen ID: {winner_id}"
             embed.add_field(name="🏆 Grand Prize Winner", value=winner_name, inline=False)
-            embed.add_field(name="💰 Prize Awarded", value=f"**{prize_amount:.1f}** credits", inline=False)
-            embed.set_footer(text=f"{tax_amount:.1f} credits have been collected as State Tax.")
+            embed.add_field(name="💰 Prize Awarded", value=f"**{prize_amount:,.1f}** credits", inline=False)
+            embed.set_footer(text=f"{tax_amount:,.1f} credits have been collected as State Tax.")
 
             try:
                 await output_channel.send(embed=embed)

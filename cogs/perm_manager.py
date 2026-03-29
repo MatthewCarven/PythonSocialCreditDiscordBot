@@ -69,7 +69,7 @@ class PermManager(commands.Cog):
             
         # 6. Add the correct new role
         try:
-            await member.add_roles(target_role, reason=f"Social Credit score reached {new_score:.1f}")
+            await member.add_roles(target_role, reason=f"Social Credit score reached {new_score:,.1f}")
             print(f"✅ Role '{target_role.name}' assigned to {member.display_name} in '{guild.name}'.")
         except discord.Forbidden:
             print(f"🚨 [Permissions Error] Bot lacks permissions to add roles in '{guild.name}'.")

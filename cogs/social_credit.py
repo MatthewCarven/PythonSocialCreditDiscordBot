@@ -44,7 +44,7 @@ class WorkAssignment(discord.ui.View):
             description=f"You dutifully served the State and earned **{amount}** credits.",
             color=discord.Color.green()
         )
-        embed.set_footer(text=f"New Social Standing: {new_score:.1f}")
+        embed.set_footer(text=f"New Social Standing: {new_score:,.1f}")
 
         for child in self.children:
             child.disabled = True
@@ -69,7 +69,7 @@ class WorkAssignment(discord.ui.View):
             description = f"You manipulated the system perfectly. You gained **{amount}** credits."
             color = discord.Color.dark_gold()
             embed = discord.Embed(title=title, description=description, color=color)
-            embed.set_footer(text=f"New Social Standing: {new_score:.1f}")
+            embed.set_footer(text=f"New Social Standing: {new_score:,.1f}")
 
         else:
             penalty_multiplier = max(1, self.level) * 4.0 
@@ -83,7 +83,7 @@ class WorkAssignment(discord.ui.View):
             description = f"The State caught your treasonous act! You have been fined **{abs(amount)}** credits. The fine has been added to the slush fund."
             color = discord.Color.red()
             embed = discord.Embed(title=title, description=description, color=color)
-            embed.set_footer(text=f"{random_fine_message()} | Current Social Standing: {new_score:.1f}")
+            embed.set_footer(text=f"{random_fine_message()} | Current Social Standing: {new_score:,.1f}")
 
         for child in self.children:
             child.disabled = True
@@ -187,7 +187,7 @@ class SocialCredit(commands.Cog):
         async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
             if isinstance(error, app_commands.CommandOnCooldown):
                 mins_left = error.retry_after / 60
-                await interaction.response.send_message(f"🚨 The State demands patience. Also we remind you that greed is a crime against the state.  Try this specific task again in **{mins_left:.1f} minutes**.", ephemeral=True)
+                await interaction.response.send_message(f"🚨 The State demands patience. Also we remind you that greed is a crime against the state.  Try this specific task again in **{mins_left:,.1f} minutes**.", ephemeral=True)
 
         for task_name in self.grind_tasks:
             # A factory is needed to correctly capture the task_name for the callback
@@ -307,7 +307,7 @@ class SocialCredit(commands.Cog):
                 self.bot.dispatch("social_credit_change", message.author, new_score)
                 try:
                     output_channel = await self._get_output_channel(message=message)
-                    await output_channel.send(f"🚨 State Violation by {message.author.mention}! {random_banned_word_message()} Use of banned word '{word}' has resulted in a **{abs(penalty):.1f}** credit fine. The fine has been added to the slush fund. New social standing: **{new_score:.1f}**")
+                    await output_channel.send(f"🚨 State Violation by {message.author.mention}! {random_banned_word_message()} Use of banned word '{word}' has resulted in a **{abs(penalty):,.1f}** credit fine. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
                     pass # Can't send messages in this channel
                 return # Stop after finding one banned word
@@ -330,7 +330,7 @@ class SocialCredit(commands.Cog):
                             description=f"Citizen {message.author.mention} has shown exemplary behavior by using the phrase '{word}'.\nThey have been awarded **{reward}** credits.\n\n*{random_earn_message()}*",
                             color=discord.Color.gold()
                         )
-                        embed.set_footer(text=f"New Social Standing: {new_score:.1f}")
+                        embed.set_footer(text=f"New Social Standing: {new_score:,.1f}")
                         try:
                             await output_channel.send(embed=embed)
                         except discord.Forbidden:
@@ -360,7 +360,7 @@ class SocialCredit(commands.Cog):
 
         color = discord.Color.green() if xp >= 0 else discord.Color.red()
         embed = discord.Embed(title=f"Profile: {member.display_name}", color=color)
-        embed.add_field(name="Credits", value=f"{xp:.1f}")
+        embed.add_field(name="Credits", value=f"{xp:,.1f}")
         embed.add_field(name="Status", value=f"Level {level}: {tier_name}")
         embed.add_field(name="El Virtual", value=f"{btc_balance:,.6f} BTC", inline=False)
 
@@ -387,7 +387,7 @@ class SocialCredit(commands.Cog):
         giver_balance = db.get_credit(giver_id, giver_guild_id)
 
         if giver_balance < amount:
-            await interaction.response.send_message(f"You don't have enough credits to give {amount:.1f}. Your balance is {giver_balance:.1f}.", ephemeral=True)
+            await interaction.response.send_message(f"You don't have enough credits to give {amount:,.1f}. Your balance is {giver_balance:,.1f}.", ephemeral=True)
             return
 
         # Perform the transfer
@@ -404,11 +404,11 @@ class SocialCredit(commands.Cog):
 
         embed = discord.Embed(
             title="💸 Credit Transfer Successful 💸",
-            description=f"{interaction.user.mention} has given **{amount:.1f}** credits to {member.mention}.",
+            description=f"{interaction.user.mention} has given **{amount:,.1f}** credits to {member.mention}.",
             color=discord.Color.blue()
         )
-        embed.add_field(name=f"{interaction.user.display_name}'s New Balance", value=f"{new_giver_score:.1f}")
-        embed.add_field(name=f"{member.display_name}'s New Balance", value=f"{new_receiver_score:.1f}")
+        embed.add_field(name=f"{interaction.user.display_name}'s New Balance", value=f"{new_giver_score:,.1f}")
+        embed.add_field(name=f"{member.display_name}'s New Balance", value=f"{new_receiver_score:,.1f}")
         
         await interaction.response.send_message("Transfer complete.", ephemeral=True)
         try:
@@ -439,19 +439,19 @@ class SocialCredit(commands.Cog):
         # Gifting credits
         if amount > 0:
             if issuer_balance < amount:
-                await interaction.response.send_message(f"You do not have enough credits to gift {amount:.1f}. Your balance is {issuer_balance:.1f}.", ephemeral=True)
+                await interaction.response.send_message(f"You do not have enough credits to gift {amount:,.1f}. Your balance is {issuer_balance:,.1f}.", ephemeral=True)
                 return
             title = "📜 A Decree of Patronage 📜"
-            description = f"{issuer.mention} has decreed a gift of **{amount:.1f}** credits to {target.mention}!"
+            description = f"{issuer.mention} has decreed a gift of **{amount:,.1f}** credits to {target.mention}!"
 
         # Taking credits
         else: # amount < 0
             abs_amount = abs(amount)
             if target_balance < abs_amount:
-                await interaction.response.send_message(f"{target.display_name} does not have enough credits to cover this debt of {abs_amount:.1f}. Their balance is {target_balance:.1f}.", ephemeral=True)
+                await interaction.response.send_message(f"{target.display_name} does not have enough credits to cover this debt of {abs_amount:,.1f}. Their balance is {target_balance:,.1f}.", ephemeral=True)
                 return
             title = "⚖️ A Decree of Debt ⚖️"
-            description = f"{issuer.mention} has decreed a debt of **{abs_amount:.1f}** credits against {target.mention}!"
+            description = f"{issuer.mention} has decreed a debt of **{abs_amount:,.1f}** credits against {target.mention}!"
 
         # Perform the transfer
         # Issuer loses the amount, target gains the amount.
@@ -472,8 +472,8 @@ class SocialCredit(commands.Cog):
             description=description,
             color=discord.Color.blue()
         )
-        embed.add_field(name=f"{issuer.display_name}'s New Balance", value=f"{new_issuer_score:.1f}")
-        embed.add_field(name=f"{target.display_name}'s New Balance", value=f"{new_target_score:.1f}")
+        embed.add_field(name=f"{issuer.display_name}'s New Balance", value=f"{new_issuer_score:,.1f}")
+        embed.add_field(name=f"{target.display_name}'s New Balance", value=f"{new_target_score:,.1f}")
         
         if reason:
             embed.add_field(name="Reason", value=reason, inline=False)
@@ -551,11 +551,11 @@ class SocialCredit(commands.Cog):
             
             embed = discord.Embed(
                 title="💰 Heist Successful! 💰",
-                description=f"{heister.mention} successfully stole **{stolen_amount:.1f}** credits from {target.mention}!",
+                description=f"{heister.mention} successfully stole **{stolen_amount:,.1f}** credits from {target.mention}!",
                 color=discord.Color.dark_gold()
             )
-            embed.add_field(name="Heister's New Balance", value=f"{new_heister_score:.1f}", inline=True)
-            embed.add_field(name="Victim's New Balance", value=f"{new_target_score:.1f}", inline=True)
+            embed.add_field(name="Heister's New Balance", value=f"{new_heister_score:,.1f}", inline=True)
+            embed.add_field(name="Victim's New Balance", value=f"{new_target_score:,.1f}", inline=True)
             await output_channel.send(embed=embed)
             await interaction.followup.send("The deed is done.", ephemeral=True)
 
@@ -572,10 +572,10 @@ class SocialCredit(commands.Cog):
 
             embed = discord.Embed(
                 title="🚨 Heist Failed! 🚨",
-                description=f"{heister.mention} was caught trying to steal from {target.mention} and has been fined **{penalty_amount:.1f}** credits! The fine has been added to the slush fund.",
+                description=f"{heister.mention} was caught trying to steal from {target.mention} and has been fined **{penalty_amount:,.1f}** credits! The fine has been added to the slush fund.",
                 color=discord.Color.dark_red()
             )
-            embed.add_field(name="Heister's New Balance", value=f"{new_heister_score:.1f}", inline=True)
+            embed.add_field(name="Heister's New Balance", value=f"{new_heister_score:,.1f}", inline=True)
             embed.set_footer(text=random_fine_message())
             await output_channel.send(embed=embed)
             await interaction.followup.send("You were caught.", ephemeral=True)
@@ -595,7 +595,7 @@ class SocialCredit(commands.Cog):
 
         user_balance = db.get_credit(user.id, guild_id)
         if user_balance < amount:
-            await interaction.response.send_message(f"You don't have enough credits to bet {amount:.1f}. Your current balance is {user_balance:.1f}.", ephemeral=True)
+            await interaction.response.send_message(f"You don't have enough credits to bet {amount:,.1f}. Your current balance is {user_balance:,.1f}.", ephemeral=True)
             return
 
         # --- Game Logic ---
@@ -614,10 +614,10 @@ class SocialCredit(commands.Cog):
 
             embed = discord.Embed(
                 title="🎉 Coinflip Win! 🎉",
-                description=f"The coin landed on **{result.capitalize()}**! {user.mention} won **{amount:.1f}** credits!",
+                description=f"The coin landed on **{result.capitalize()}**! {user.mention} won **{amount:,.1f}** credits!",
                 color=discord.Color.green()
             )
-            embed.add_field(name="New Balance", value=f"{new_balance:.1f}")
+            embed.add_field(name="New Balance", value=f"{new_balance:,.1f}")
 
         else:
             # --- LOSS ---
@@ -627,10 +627,10 @@ class SocialCredit(commands.Cog):
 
             embed = discord.Embed(
                 title="💸 Coinflip Loss 💸",
-                description=f"The coin landed on **{result.capitalize()}**. {user.mention} lost **{amount:.1f}** credits.",
+                description=f"The coin landed on **{result.capitalize()}**. {user.mention} lost **{amount:,.1f}** credits.",
                 color=discord.Color.red()
             )
-            embed.add_field(name="New Balance", value=f"{new_balance:.1f}")
+            embed.add_field(name="New Balance", value=f"{new_balance:,.1f}")
 
         await output_channel.send(embed=embed)
         await interaction.followup.send("Your bet has been settled.", ephemeral=True)
@@ -656,7 +656,7 @@ class SocialCredit(commands.Cog):
             description=f"Admin {interaction.user.mention} has {action} **{abs(amount)}** credits to {member.mention}.",
             color=color
         )
-        embed.add_field(name="New Social Standing", value=f"{new_score:.1f} Credits")
+        embed.add_field(name="New Social Standing", value=f"{new_score:,.1f} Credits")
         output_channel = await self._get_output_channel(interaction=interaction)
         await output_channel.send(embed=embed)
 
@@ -710,7 +710,7 @@ class SocialCredit(commands.Cog):
         for index, (user_id, score) in enumerate(top_users, start=1):
             member = interaction.guild.get_member(user_id)
             name = member.display_name if member else "Unknown Citizen"
-            top_text += f"**{index}.** {name} — **{score:.1f}**\n"
+            top_text += f"**{index}.** {name} — **{score:,.1f}**\n"
         embed.add_field(name="🏆 Model Citizens", value=top_text, inline=False)
         
         if bottom_users:
@@ -718,7 +718,7 @@ class SocialCredit(commands.Cog):
             for index, (user_id, score) in enumerate(bottom_users, start=1):
                 member = interaction.guild.get_member(user_id)
                 name = member.display_name if member else "Unknown Citizen"
-                score_display = f"🚨 **{score:.1f}**" if score < 0 else f"**{score:.1f}**"
+                score_display = f"🚨 **{score:,.1f}**" if score < 0 else f"**{score:,.1f}**"
                 bottom_text += f"**{index}.** {name} — {score_display}\n"
             embed.add_field(name="💀 Most Wanted (State Enemies)", value=bottom_text, inline=False)
             
@@ -739,7 +739,7 @@ class SocialCredit(commands.Cog):
 
         embed = discord.Embed(
             title="🍞 Daily Ration Claimed",
-            description=f"The State has graciously awarded you **{amount}** credits.\nYour new standing is **{new_score:.1f}**.",
+            description=f"The State has graciously awarded you **{amount}** credits.\nYour new standing is **{new_score:,.1f}**.",
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed=embed)
@@ -760,7 +760,7 @@ class SocialCredit(commands.Cog):
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CommandOnCooldown):
             mins_left = error.retry_after / 60
-            await interaction.response.send_message(f"🚨 The State demands patience. Also we remind you that greed is a crime against the state.  Try this specific task again in **{mins_left:.1f} minutes**.", ephemeral=True)
+            await interaction.response.send_message(f"🚨 The State demands patience. Also we remind you that greed is a crime against the state.  Try this specific task again in **{mins_left:,.1f} minutes**.", ephemeral=True)
 
 
 

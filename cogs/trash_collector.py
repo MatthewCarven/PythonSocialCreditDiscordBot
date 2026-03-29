@@ -1,359 +1,84 @@
 """
-TRASH COLLECTOR - Hardware Definitions Database
-================================================
-A comprehensive catalogue of computational hardware spanning 50+ years.
-Each entry represents a "trash find" the player can discover and combine
-into the ultimate SUPER-HYPER-MEGA-ULTRA graphics rig.
+TRASH COLLECTOR - Discord Cog
+==============================
+Scavenge vintage e-waste, build mining rigs, and mine El Virtual (₿v).
 
-Compute Score Formula:
-    score = clock_mhz * (word_bits / 8) * cores * type_multiplier * era_bonus
-
-Type Multipliers:
-    CPU          = 1.0
-    GPU          = 2.5  (parallel processing bonus)
-    FPU          = 1.5  (floating point bonus)
-    DSP          = 1.3  (signal processing bonus)
-    MCU          = 0.6  (microcontroller penalty)
-    APU          = 2.0  (accelerated processing)
-    CUSTOM       = 1.8  (custom silicon bonus)
-    COPROCESSOR  = 1.2
-
-Era Bonus (rarity multiplier - older = rarer = more valuable in-game):
-    pre-1975     = 5.0
-    1975-1984    = 4.0
-    1985-1994    = 3.0
-    1995-2004    = 2.0
-    2005-2014    = 1.5
-    2015+        = 1.0
-
-Usage:
-    import random
-    from trash_collector_hardware import HARDWARE_DB, compute_score, random_find
-
-    # Get a random piece of hardware
-    hw = random_find()
-    print(f"You found: {hw['name']}! Score: {compute_score(hw)}")
-
-    # Combine finds
-    total = sum(compute_score(random_find()) for _ in range(5))
-    print(f"Your rig scores: {total}")
+Game logic is sourced from game_engine.py (synced from Trash Collector 2).
+This cog provides the Discord interface on top of that engine.
 """
 
 import random
-import math
 import time
-import csv
-import os
+import datetime
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from mining_db import MiningDB
 from database import CreditDB
 
 # =============================================================================
-# TYPE MULTIPLIERS
+# GAME ENGINE IMPORTS (from Trash Collector 2)
 # =============================================================================
-TYPE_MULTIPLIERS = {
-    "CPU":         1.0,
-    "GPU":         2.5,
-    "FPU":         1.5,
-    "DSP":         1.3,
-    "DSC":         1.3,
-    "MCU":         0.6,
-    "APU":         2.0,
-    "CUSTOM":      1.8,
-    "COPROCESSOR": 1.2,
-    "FPGA":        1.4,
-    "NPU":         2.2,
-    "TPU":         2.8,
-    "ASIC":        2.0,
-    "SOC":         1.7,
-    "DATACENTER":  5.0,
-    "ARRAY":       3.5,
-}
-
-# =============================================================================
-# ERA BONUS (rarity / collectibility)
-# =============================================================================
-def era_bonus(year: int) -> float:
-    if year < 1975:
-        return 5.0
-    elif year < 1985:
-        return 4.0
-    elif year < 1995:
-        return 3.0
-    elif year < 2005:
-        return 2.0
-    elif year < 2015:
-        return 1.5
-    else:
-        return 1.0
-
-
-def compute_score(hw: dict) -> float:
-    """Calculate the compute score for a piece of hardware.
-
-    Uses hashrate_mhs when available (trash2 items), otherwise falls back
-    to the classic clock * word_bits * cores formula (trash1 items).
-    """
-    hw_type = hw.get("type", "CPU")
-    year = hw.get("year", 2000)
-    tmult = TYPE_MULTIPLIERS.get(hw_type, 1.0)
-    eb = era_bonus(year)
-
-    hashrate = hw.get("hashrate_mhs", 0)
-    if hashrate:
-        # Hashrate-based scoring: log-scale so PH/s datacenter scores don't
-        # utterly dwarf everything, but still rewards bigger rigs heavily.
-        import math
-        return round(math.log2(hashrate + 1) * 100 * tmult * eb, 2)
-
-    clock = hw.get("clock_mhz", 0)
-    bits = hw.get("word_bits", 8)
-    cores = hw.get("cores", 1)
-    return round(clock * (bits / 8) * cores * tmult * eb, 2)
-
+# All core game logic lives in game_engine.py. Import everything from there
+# so we get the latest scoring, parsing, and multiplier improvements.
+from game_engine import (
+    # Scoring
+    TYPE_MULTIPLIERS, TYPE_SCORE_BOOST,
+    era_bonus, compute_score,
+    # Hardware database
+    HARDWARE_DB, HARDWARE_LOOKUP,
+    random_find, random_finds,
+    # Rarity
+    RARITY_ORDER, RARITY_EMOJI,
+    # Game constants (non-economy)
+    MINING_RATE, ACTIVE_MINING_MULTIPLIER,
+    SCAVENGE_COOLDOWN, MINE_COOLDOWN, PARTS_PER_RIG,
+    BTC_MIN_PRICE, BTC_MAX_PRICE, BTC_VOLATILITY, BTC_REVERSION,
+    MARKET_REFRESH_SECONDS, MARKET_SLOTS, RARITY_PRICE_MULT,
+    # Market
+    update_btc_price,
+    # Environmental helpers (used by local Discord-flavoured env functions)
+    rig_total_watts, annual_kwh, annual_co2_kg, annual_co2_tonnes,
+    trees_destroyed_equivalent, rainforest_hectares_destroyed,
+    soccer_fields_destroyed, panda_habitat_percentage,
+    arctic_ice_equivalent_m3, electricity_cost_annual,
+    # Rig bonus multipliers (NEW in Trash Collector 2)
+    diversity_multiplier, legendary_multiplier,
+    # Combo bonus (heterogeneous stack synergy — FPGA as hypervisor)
+    combo_multiplier,
+    # Business Accountability & Planning Act — permit system
+    assess_permit_tier, CPRM_THRESHOLD_BTC, CPRM_OVERHEAD_RATE, PERMIT_DURATION_DAYS,
+)
 
 # =============================================================================
-# THE HARDWARE DATABASE  (loaded from trash.csv)
+# DISCORD-SPECIFIC OVERRIDES
 # =============================================================================
-_INT_FIELDS = {"year", "word_bits", "cores", "process_nm", "transistors"}
-_FLOAT_FIELDS = {"clock_mhz", "tdp_watts", "hashrate_mhs"}
+# These values differ from the standalone game's economy.
 
+# Credits per watt per hour (Discord balance, not standalone $$$)
+ELECTRICITY_RATE = 0.001
 
-def _load_hardware_csv(filename="trash.csv"):
-    """Load hardware entries from a CSV file and return a list of dicts."""
-    # look next to this file first, then project root
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(here, filename),
-        os.path.join(here, "..", filename),
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            break
-    else:
-        raise FileNotFoundError(f"Cannot find {filename} in {candidates}")
+# Mean-reversion target for El Virtual price in credits (standalone uses $50k)
+BTC_BASE_PRICE = 50.0
 
-    entries = []
-    with open(path, newline="", encoding="utf-8", errors="replace") as f:
-        for row in csv.DictReader(f):
-            for k in _INT_FIELDS:
-                if k in row and row[k]:
-                    try:
-                        row[k] = int(float(row[k]))
-                    except (ValueError, TypeError):
-                        row[k] = 0
-            for k in _FLOAT_FIELDS:
-                if k in row and row[k]:
-                    try:
-                        row[k] = float(row[k])
-                    except (ValueError, TypeError):
-                        row[k] = 0.0
-            entries.append(row)
-    return entries
-
-
-HARDWARE_DB = _load_hardware_csv("trash.csv") + _load_hardware_csv("trash2.csv")
-_HARDWARE_DB_PLACEHOLDER = [  # kept so the rest of the file parses; never used
-]  # placeholder empty
-
-
-# Fast lookup by hardware id
-HARDWARE_LOOKUP = {hw["id"]: hw for hw in HARDWARE_DB}
-
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def random_find() -> dict:
-    """Simulate finding a random piece of hardware in the trash."""
-    return random.choice(HARDWARE_DB)
-
-
-def random_finds(n: int = 5) -> list:
-    """Find multiple random hardware pieces."""
-    return random.choices(HARDWARE_DB, k=n)
-
-
-def build_rig(n: int = 5) -> dict:
-    """Build a rig from N random finds and calculate total score."""
-    finds = random_finds(n)
-    scores = [compute_score(hw) for hw in finds]
-    return {
-        "parts": finds,
-        "scores": scores,
-        "total_score": round(sum(scores), 2),
-        "part_count": len(finds),
-        "rarest_find": min(finds, key=lambda x: {
-            "mythic": 0, "legendary": 1, "epic": 2,
-            "rare": 3, "uncommon": 4, "common": 5
-        }.get(x.get("rarity", "common"), 5)),
-    }
-
-
-def get_by_era(start_year: int, end_year: int) -> list:
-    """Get all hardware from a specific era."""
-    return [hw for hw in HARDWARE_DB if start_year <= hw["year"] <= end_year]
-
-
-def get_by_type(hw_type: str) -> list:
-    """Get all hardware of a specific type."""
-    return [hw for hw in HARDWARE_DB if hw["type"] == hw_type]
-
-
-def get_by_manufacturer(manufacturer: str) -> list:
-    """Get hardware by manufacturer (case-insensitive partial match)."""
-    m = manufacturer.lower()
-    return [hw for hw in HARDWARE_DB if m in hw["manufacturer"].lower()]
-
-
-def leaderboard(n: int = 10) -> list:
-    """Get top N hardware by compute score."""
-    scored = [(hw, compute_score(hw)) for hw in HARDWARE_DB]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:n]
-
-
-
-
-# =============================================================================
-# ENVIRONMENTAL DESTRUCTION ENGINE
-# =============================================================================
-# Because every compute score needs a guilt trip.
-#
-# METHODOLOGY:
-# ============
-# We calculate environmental impact based on:
-#   1. Power consumption (TDP watts) of all hardware running simultaneously
-#   2. Assumed 24/7 operation (this IS a mining rig after all)
-#   3. Global average carbon intensity of electricity: ~475g CO2/kWh (IEA)
-#   4. Rainforest absorption rate: ~7.6 tonnes CO2 per hectare per year
-#   5. One soccer field ≈ 0.714 hectares
-#   6. Bonus: we also track in trees, pandas displaced, and ice caps melted.
-#
-# REAL FACTS USED:
-#   - A mature tree absorbs ~22kg CO2/year (European Environment Agency)
-#   - Amazon deforestation rate ~10,000 km²/year ≈ 1M hectares/year
-#   - Global electricity carbon intensity: ~475g CO2/kWh (IEA 2023)
-#   - Bitcoin network uses ~120 TWh/year (Cambridge estimate)
-#   - A single RTX 4090 mining rig ≈ 3942 kWh/year
-#   - Giant panda habitat: ~5900 km² remaining in the wild (WWF)
-
-# --- Constants ---
-CO2_GRAMS_PER_KWH = 475.0           # Global average grid carbon intensity
-KG_CO2_PER_TREE_PER_YEAR = 22.0     # Mature tree annual CO2 absorption
-TONNES_CO2_PER_HECTARE_YEAR = 7.6   # Tropical rainforest absorption
-HECTARES_PER_SOCCER_FIELD = 0.714   # FIFA standard pitch
-SQ_KM_PER_HECTARE = 0.01
-PANDA_HABITAT_SQ_KM = 5900.0        # Total remaining wild giant panda habitat
-ARCTIC_ICE_VOLUME_KM3 = 16500.0     # Summer + winter average Arctic sea ice
-KG_CO2_PER_KM3_ICE_MELT = 3.3e12   # Very rough estimate
-HOURS_PER_YEAR = 8760.0
-GRAMS_PER_KG = 1000.0
-KG_PER_TONNE = 1000.0
-
-# =============================================================================
-# MINING GAME CONSTANTS
-# =============================================================================
-ELECTRICITY_RATE = 0.001          # Social Credits per watt per hour
-MINING_RATE = 1.0 / 5_000_000    # BTC per compute-score per hour
-ACTIVE_MINING_MULTIPLIER = 2.0    # /mine gives 2x a one-hour cycle
-SCAVENGE_COOLDOWN = 7200          # 2 hours
-MINE_COOLDOWN = 3600              # 1 hour
-PARTS_PER_RIG = 5
-BTC_BASE_PRICE = 50.0             # Mean-reversion target (credits per El Virtual)
-BTC_MIN_PRICE = 5.0
-BTC_MAX_PRICE = 500.0
-BTC_VOLATILITY = 0.03             # Per-hour price volatility
-BTC_REVERSION = 0.01              # Mean-reversion strength per hour
-MARKET_REFRESH_SECONDS = 10800    # 3 hours between market restocks
-MARKET_SLOTS = 12                 # Number of parts available at a time
-
-# BTC price multipliers per rarity for the parts market
-RARITY_PRICE_MULT = {
-    "common":    0.002,
-    "uncommon":  0.005,
-    "rare":      0.012,
-    "epic":      0.025,
-    "legendary": 0.060,
-    "mythic":    0.150,
+# Discord embed colours per rarity (integer hex, not CSS strings)
+RARITY_COLOR = {
+    "mythic":    0xAA00FF,
+    "legendary": 0xFFD700,
+    "epic":      0x9B59B6,
+    "rare":      0x3498DB,
+    "uncommon":  0x2ECC71,
+    "common":    0x95A5A6,
 }
 
 
-def update_btc_price(current_price: float, last_updated: float) -> float:
-    """Random walk with mean reversion, stepped hourly."""
-    elapsed_hours = (time.time() - last_updated) / 3600.0
-    if elapsed_hours < 0.01:
-        return current_price
-    steps = max(1, min(int(elapsed_hours), 168))  # cap at 1 week of steps
-    price = current_price
-    for _ in range(steps):
-        drift = BTC_REVERSION * (BTC_BASE_PRICE - price)
-        shock = random.gauss(0, BTC_VOLATILITY * price)
-        price += drift + shock
-    return round(max(BTC_MIN_PRICE, min(BTC_MAX_PRICE, price)), 2)
-
-
-def rig_total_watts(parts: list) -> float:
-    """Total TDP of all parts in a rig."""
-    return sum(hw.get("tdp_watts", 0) for hw in parts)
-
-
-def annual_kwh(total_watts: float) -> float:
-    """Annual energy consumption in kWh (24/7 operation)."""
-    return (total_watts / 1000.0) * HOURS_PER_YEAR
-
-
-def annual_co2_kg(total_watts: float) -> float:
-    """Annual CO2 emissions in kg."""
-    kwh = annual_kwh(total_watts)
-    return (kwh * CO2_GRAMS_PER_KWH) / GRAMS_PER_KG
-
-
-def annual_co2_tonnes(total_watts: float) -> float:
-    """Annual CO2 emissions in metric tonnes."""
-    return annual_co2_kg(total_watts) / KG_PER_TONNE
-
-
-def trees_destroyed_equivalent(total_watts: float) -> float:
-    """Number of trees whose annual CO2 absorption your rig negates."""
-    return annual_co2_kg(total_watts) / KG_CO2_PER_TREE_PER_YEAR
-
-
-def rainforest_hectares_destroyed(total_watts: float) -> float:
-    """Hectares of rainforest whose absorption capacity your rig cancels out, per year."""
-    return annual_co2_tonnes(total_watts) / TONNES_CO2_PER_HECTARE_YEAR
-
-
-def soccer_fields_destroyed(total_watts: float) -> float:
-    """Soccer fields of rainforest equivalent destroyed per year."""
-    return rainforest_hectares_destroyed(total_watts) / HECTARES_PER_SOCCER_FIELD
-
-
-def panda_habitat_percentage(total_watts: float) -> float:
-    """Percentage of remaining giant panda habitat-equivalent your rig destroys."""
-    hectares = rainforest_hectares_destroyed(total_watts)
-    sq_km = hectares * SQ_KM_PER_HECTARE
-    return (sq_km / PANDA_HABITAT_SQ_KM) * 100.0
-
-
-def arctic_ice_equivalent_cm3(total_watts: float) -> float:
-    """Cubic metres of Arctic ice your CO2 would melt (very rough estimate)."""
-    co2_kg = annual_co2_kg(total_watts)
-    # ~3.3 billion tonnes CO2 per km³ ice melt (extremely rough)
-    km3 = co2_kg / KG_CO2_PER_KM3_ICE_MELT
-    return km3 * 1e9  # Convert to cubic metres
-
-
-def electricity_cost_annual(total_watts: float, price_per_kwh: float = 0.12) -> float:
-    """Annual electricity cost in USD (default US avg ~$0.12/kWh)."""
-    return annual_kwh(total_watts) * price_per_kwh
-
+# =============================================================================
+# DISCORD-FLAVOURED ENVIRONMENTAL FUNCTIONS
+# =============================================================================
+# These override game_engine versions to add emoji guilt ratings for Discord.
 
 def guilt_rating_co2(co2_tonnes: float) -> str:
-    """Return a shame-based guilt rating from raw CO2 tonnes."""
+    """Shame-based guilt rating with Discord-friendly emojis."""
     if co2_tonnes < 0.001:
         return "🌱 PRISTINE — A butterfly thanks you"
     elif co2_tonnes < 0.01:
@@ -379,93 +104,44 @@ def guilt_rating_co2(co2_tonnes: float) -> str:
 
 
 def guilt_rating(total_watts: float) -> str:
-    """Return a shame-based guilt rating string (annual projection from watts)."""
+    """Annual guilt rating from watt draw."""
     return guilt_rating_co2(annual_co2_tonnes(total_watts))
 
 
 def env_from_kwh(kwh: float) -> dict:
-    """Derive all environmental destruction metrics from actual kWh consumed."""
-    co2_kg = (kwh * CO2_GRAMS_PER_KWH) / GRAMS_PER_KG
-    co2_tonnes = co2_kg / KG_PER_TONNE
-    rainforest = co2_tonnes / TONNES_CO2_PER_HECTARE_YEAR
-    return {
-        "kwh": round(kwh, 2),
-        "co2_kg": round(co2_kg, 2),
-        "co2_tonnes": round(co2_tonnes, 6),
-        "trees_negated": round(co2_kg / KG_CO2_PER_TREE_PER_YEAR, 2),
-        "rainforest_hectares": round(rainforest, 6),
-        "soccer_fields": round(rainforest / HECTARES_PER_SOCCER_FIELD, 6),
-        "panda_habitat_pct": round((rainforest * SQ_KM_PER_HECTARE / PANDA_HABITAT_SQ_KM) * 100, 10),
-        "arctic_ice_m3": round((co2_kg / KG_CO2_PER_KM3_ICE_MELT) * 1e9, 6),
-        "guilt_rating": guilt_rating_co2(co2_tonnes),
-    }
+    """Derive env metrics from kWh; uses emoji guilt rating for Discord."""
+    import game_engine as _ge
+    result = dict(_ge.env_from_kwh(kwh))
+    result["guilt_rating"] = guilt_rating_co2(result["co2_tonnes"])
+    return result
 
 
 def full_environmental_report(parts: list, price_per_kwh: float = 0.12) -> dict:
-    """Generate a complete environmental destruction report for a rig."""
-    watts = rig_total_watts(parts)
-    report = {
-        "total_watts": round(watts, 2),
-        "annual_kwh": round(annual_kwh(watts), 2),
-        "annual_co2_kg": round(annual_co2_kg(watts), 2),
-        "annual_co2_tonnes": round(annual_co2_tonnes(watts), 4),
-        "trees_negated": round(trees_destroyed_equivalent(watts), 1),
-        "rainforest_hectares": round(rainforest_hectares_destroyed(watts), 4),
-        "soccer_fields": round(soccer_fields_destroyed(watts), 4),
-        "panda_habitat_pct": round(panda_habitat_percentage(watts), 8),
-        "arctic_ice_m3": round(arctic_ice_equivalent_cm3(watts), 4),
-        "annual_electricity_cost_usd": round(electricity_cost_annual(watts, price_per_kwh), 2),
-        "guilt_rating": guilt_rating_co2(annual_co2_tonnes(watts)),
+    """Full env report for a rig; uses emoji guilt rating for Discord."""
+    import game_engine as _ge
+    result = dict(_ge.full_environmental_report(parts, price_per_kwh))
+    result["guilt_rating"] = guilt_rating_co2(result["annual_co2_tonnes"])
+    return result
+
+
+# =============================================================================
+# HELPER FUNCTIONS (Discord-side only)
+# =============================================================================
+
+def build_rig(n: int = 5) -> dict:
+    """Build a demo rig from N random finds (used by /bitcoin_rig)."""
+    finds = random_finds(n)
+    scores = [compute_score(hw) for hw in finds]
+    return {
+        "parts": finds,
+        "scores": scores,
+        "total_score": round(sum(scores), 2),
+        "part_count": len(finds),
+        "rarest_find": min(finds, key=lambda x: {
+            "mythic": 0, "legendary": 1, "epic": 2,
+            "rare": 3, "uncommon": 4, "common": 5
+        }.get(x.get("rarity", "common"), 5)),
     }
-    return report
-
-
-def print_environmental_report(parts: list, price_per_kwh: float = 0.12):
-    """Pretty-print the environmental destruction report."""
-    r = full_environmental_report(parts, price_per_kwh)
-    print()
-    print("=" * 70)
-    print("  🌍 ENVIRONMENTAL DESTRUCTION REPORT 🌍")
-    print("=" * 70)
-    print(f"  Total Rig Power Draw:      {r['total_watts']:>12,.1f} W")
-    print(f"  Annual Energy Use:         {r['annual_kwh']:>12,.1f} kWh")
-    print(f"  Annual CO₂ Emissions:      {r['annual_co2_kg']:>12,.1f} kg")
-    print(f"                             {r['annual_co2_tonnes']:>12,.4f} tonnes")
-    print(f"  ─────────────────────────────────────────────")
-    print(f"  🌳 Trees Negated:          {r['trees_negated']:>12,.1f}")
-    print(f"  🌴 Rainforest Destroyed:   {r['rainforest_hectares']:>12,.4f} hectares/yr")
-    print(f"  ⚽ Soccer Fields Lost:      {r['soccer_fields']:>12,.4f}")
-    print(f"  🐼 Panda Habitat Erased:   {r['panda_habitat_pct']:>12.8f} %")
-    print(f"  🧊 Arctic Ice Melted:      {r['arctic_ice_m3']:>12,.4f} m³")
-    print(f"  💰 Annual Power Bill:      ${r['annual_electricity_cost_usd']:>11,.2f}")
-    print(f"  ─────────────────────────────────────────────")
-    print(f"  GUILT RATING: {r['guilt_rating']}")
-    print("=" * 70)
-    print()
-
-# =============================================================================
-# RARITY HELPERS
-# =============================================================================
-
-RARITY_ORDER = ["mythic", "legendary", "epic", "rare", "uncommon", "common"]
-
-RARITY_EMOJI = {
-    "mythic":    "\U0001f30c",
-    "legendary": "\u2b50",
-    "epic":      "\U0001f7e3",
-    "rare":      "\U0001f535",
-    "uncommon":  "\U0001f7e2",
-    "common":    "\u26aa",
-}
-
-RARITY_COLOR = {
-    "mythic":    0xAA00FF,
-    "legendary": 0xFFD700,
-    "epic":      0x9B59B6,
-    "rare":      0x3498DB,
-    "uncommon":  0x2ECC71,
-    "common":    0x95A5A6,
-}
 
 
 # =============================================================================
@@ -892,6 +568,125 @@ class TrashCollector(commands.Cog):
         self.bot = bot
         self.mdb = MiningDB()
         self.credit_db = CreditDB()
+        self._decree_channel_id = None  # set via /set_decree_channel or bot config
+
+    async def cog_load(self):
+        self.daily_state_decree.start()
+
+    def cog_unload(self):
+        self.daily_state_decree.cancel()
+
+    # ── Daily State Decree ────────────────────────────────────────────────
+
+    @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
+    async def daily_state_decree(self):
+        """
+        Fires at midnight UTC every day.
+        Redistributes the CPRM pool for every guild, then posts a State Decree
+        to the first text channel named 'bot-commands', 'general', or 'trash-collector'
+        that the bot can see — or the first available text channel.
+        """
+        for guild in self.bot.guilds:
+            gid = guild.id
+            pool_total = self.mdb.get_cprm_pool_total(gid)
+
+            if pool_total <= 0:
+                continue  # quiet day — the State has nothing to announce
+
+            contributions = self.mdb.get_cprm_pool(gid)  # [(user_id, amount)]
+            if not contributions:
+                continue
+
+            overhead      = pool_total * CPRM_OVERHEAD_RATE
+            redistributed = pool_total - overhead
+            total_contrib = sum(amt for _, amt in contributions)
+
+            # Pay each contributor their proportional share back
+            for user_id, contrib in contributions:
+                if total_contrib > 0:
+                    share = redistributed * (contrib / total_contrib)
+                    self.mdb.add_btc(user_id, gid, share)
+
+            # Convert overhead BTC → credits at current market price
+            # and deposit into the guild slush fund.
+            btc_price      = self._get_btc_price(gid)
+            overhead_creds = overhead * btc_price
+            self.credit_db.add_to_slush_fund(gid, overhead_creds)
+
+            date_str = datetime.date.today().isoformat()
+            self.mdb.log_cprm_history(
+                gid, date_str, pool_total, overhead, redistributed
+            )
+            self.mdb.clear_cprm_pool(gid)
+
+            # ── Build the Decree embed ────────────────────────────────────
+            top_contributors = sorted(contributions, key=lambda x: x[1], reverse=True)[:3]
+            top_lines = []
+            for rank, (user_id, amt) in enumerate(top_contributors, 1):
+                member = guild.get_member(user_id)
+                name   = member.display_name if member else f"Citizen #{user_id}"
+                top_lines.append(f"{rank}. **{name}** — `{amt:,.6f}` BTC contributed")
+
+            embed = discord.Embed(
+                title="🏛️ MINISTRY OF COMPUTATIONAL PROSPERITY",
+                description=(
+                    "**DAILY REDISTRIBUTION ORDER**\n"
+                    f"*{date_str} — Issued under authority of the "
+                    "Business Accountability & Planning Act, Schedule 4*"
+                ),
+                color=0xAA0000,
+            )
+            embed.add_field(
+                name="📊 Today's CPRM Summary",
+                value=(
+                    f"**Total Collected:** `{pool_total:,.6f}` BTC\n"
+                    f"**Administrative Overhead (retained):** `{overhead:,.6f}` BTC "
+                    f"(`{overhead_creds:,.1f}` cr → slush fund)\n"
+                    f"**Redistributed to Compliant Operators:** `{redistributed:,.6f}` BTC\n"
+                    f"**Contributing Citizens:** `{len(contributions)}`"
+                ),
+                inline=False,
+            )
+            if top_lines:
+                embed.add_field(
+                    name="🎖️ Notable Contributors",
+                    value="\n".join(top_lines),
+                    inline=False,
+                )
+            embed.add_field(
+                name="📜 Official Notice",
+                value=(
+                    "*Citizens are reminded that mining without a valid permit constitutes a "
+                    "Schedule 4 violation of the Business Accountability & Planning Act. "
+                    "Renew your permit with* `/get_permit`*.*\n\n"
+                    "*The State thanks you for your Computational Prosperity Contributions. "
+                    "Your compliance has been noted.*"
+                ),
+                inline=False,
+            )
+            embed.set_footer(
+                text="You use electricity to make money. We use electricity to eat. We are not the same."
+            )
+
+            # Find a suitable channel to post in
+            channel = None
+            preferred = ["trash-collector", "bot-commands", "bot-spam", "general"]
+            for name in preferred:
+                channel = discord.utils.get(guild.text_channels, name=name)
+                if channel and channel.permissions_for(guild.me).send_messages:
+                    break
+            if channel is None:
+                for ch in guild.text_channels:
+                    if ch.permissions_for(guild.me).send_messages:
+                        channel = ch
+                        break
+
+            if channel:
+                await channel.send(embed=embed)
+
+    @daily_state_decree.before_loop
+    async def before_decree(self):
+        await self.bot.wait_until_ready()
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -900,12 +695,19 @@ class TrashCollector(commands.Cog):
         return [HARDWARE_LOOKUP[hid] for hid in hw_ids if hid in HARDWARE_LOOKUP]
 
     def _rig_stats(self, rig_id):
-        """Return (parts, total_score, total_watts) for a rig."""
+        """Return (parts, total_score, total_watts, combo_name, combo_desc) for a rig.
+
+        Applies diversity, legendary, and combo (FPGA hypervisor) bonuses from game_engine.
+        """
         hw_ids = self.mdb.get_rig_components(rig_id)
         parts = self._resolve_parts(hw_ids)
-        total_score = sum(compute_score(p) for p in parts)
+        base_score = sum(compute_score(p) for p in parts)
+        div_mult = diversity_multiplier(parts)
+        leg_mult = legendary_multiplier(parts)
+        combo_mult, combo_name, combo_desc = combo_multiplier(parts)
+        total_score = base_score * div_mult * leg_mult * combo_mult
         total_watts = rig_total_watts(parts)
-        return parts, total_score, total_watts
+        return parts, total_score, total_watts, combo_name, combo_desc
 
     def _get_btc_price(self, guild_id):
         """Get the current El Virtual price, applying random-walk updates."""
@@ -1102,6 +904,401 @@ class TrashCollector(commands.Cog):
         view = RigBuilderView(self, uid, gid, name, parts_data)
         await interaction.response.send_message(embed=embed, view=view)
 
+    # ── /auto_build ──────────────────────────────────────────────────────
+    # Greedy rig assembler.  Costs 10% of your BTC balance as a "consultant
+    # fee" — when you outsource the thinking, you pay for it. :-{D
+    #
+    # Algorithm (polynomial time, not TSP):
+    #  1. Sort all loose parts by individual score descending.
+    #  2. For each rig slot, draft parts to maximise type diversity + combo
+    #     bonus: FPGA first (hypervisor anchor), then GPU, CPU, ASIC, TPU,
+    #     then fill remaining slots with the highest-score leftovers.
+    #  3. Repeat until fewer than PARTS_PER_RIG parts remain.
+    #  4. Create every assembled rig, name them Auto-Rig #N.
+
+    @app_commands.command(
+        name="auto_build",
+        description="Auto-assemble rigs from loose parts for a 10% BTC consultant fee.",
+    )
+    async def auto_build(self, interaction: discord.Interaction):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer(ephemeral=False)
+
+        # ── Inventory ──────────────────────────────────────────────────
+        raw_inv = self.mdb.get_inventory(uid, gid)   # [(inv_id, hw_id), ...]
+        if len(raw_inv) < PARTS_PER_RIG:
+            return await interaction.followup.send(
+                f"⚙️ You need at least **{PARTS_PER_RIG}** loose parts to auto-build. "
+                f"You only have **{len(raw_inv)}**. `/scavenge` more first!",
+                ephemeral=True,
+            )
+
+        # ── Consultant fee ─────────────────────────────────────────────
+        btc_balance = self.mdb.get_btc_balance(uid, gid)
+        fee = btc_balance * 0.10
+        if btc_balance <= 0 or fee <= 0:
+            fee = 0.0   # broke? fine, the AI works pro-bono this once
+        self.mdb.add_btc(uid, gid, -fee)
+
+        # ── Build candidate pool ───────────────────────────────────────
+        # Attach hw dict + score to each inventory row, sort best-first.
+        pool = []
+        for inv_id, hw_id in raw_inv:
+            hw = HARDWARE_LOOKUP.get(hw_id)
+            if hw is None:
+                continue
+            pool.append({
+                "inv_id": inv_id,
+                "hw_id":  hw_id,
+                "hw":     hw,
+                "type":   hw.get("type", "CPU").upper(),
+                "score":  compute_score(hw),
+            })
+        pool.sort(key=lambda x: x["score"], reverse=True)
+
+        # Preferred type order — FPGA anchors the combo bonus, GPU/CPU are
+        # the workhorses, ASIC + TPU unlock the deeper combo tiers.
+        DRAFT_ORDER = ["FPGA", "GPU", "CPU", "ASIC", "TPU",
+                       "NEUROMORPHIC", "DSP", "MCU", "MEMORY",
+                       "MOTHERBOARD", "DATACENTER", "ARRAY"]
+
+        assembled_rigs = []   # list of lists of pool entries
+        used_inv_ids   = set()
+
+        while True:
+            remaining = [p for p in pool if p["inv_id"] not in used_inv_ids]
+            if len(remaining) < PARTS_PER_RIG:
+                break
+
+            # Draft one rig
+            rig_parts = []
+            drafted_types = set()
+
+            # Pass 1 — one of each preferred type, best score within type
+            for want_type in DRAFT_ORDER:
+                if len(rig_parts) >= PARTS_PER_RIG:
+                    break
+                candidates = [
+                    p for p in remaining
+                    if p["type"] == want_type
+                    and p["inv_id"] not in used_inv_ids
+                    and p["type"] not in drafted_types
+                ]
+                if candidates:
+                    pick = candidates[0]  # already sorted best-first
+                    rig_parts.append(pick)
+                    drafted_types.add(pick["type"])
+                    used_inv_ids.add(pick["inv_id"])
+
+            # Pass 2 — fill remaining slots with highest-score leftovers
+            for p in remaining:
+                if len(rig_parts) >= PARTS_PER_RIG:
+                    break
+                if p["inv_id"] not in used_inv_ids:
+                    rig_parts.append(p)
+                    used_inv_ids.add(p["inv_id"])
+
+            if len(rig_parts) == PARTS_PER_RIG:
+                assembled_rigs.append(rig_parts)
+
+        if not assembled_rigs:
+            # Refund fee — nothing got built
+            self.mdb.add_btc(uid, gid, fee)
+            return await interaction.followup.send(
+                "⚙️ Couldn't assemble any complete rigs from your parts.",
+                ephemeral=True,
+            )
+
+        # ── Determine next Auto-Rig number ────────────────────────────
+        existing_rigs = self.mdb.get_rigs(uid, gid)
+        existing_names = {r[1] for r in existing_rigs}
+        auto_counter = 1
+        def next_auto_name():
+            nonlocal auto_counter
+            while True:
+                candidate = f"Auto-Rig #{auto_counter}"
+                auto_counter += 1
+                if candidate not in existing_names:
+                    existing_names.add(candidate)
+                    return candidate
+
+        # ── Create rigs in DB ──────────────────────────────────────────
+        created = []
+        for rig_parts in assembled_rigs:
+            rig_name = next_auto_name()
+            inv_ids  = [p["inv_id"] for p in rig_parts]
+            rig_id   = self.mdb.create_rig(uid, gid, rig_name, inv_ids)
+            parts_hw = [p["hw"] for p in rig_parts]
+            _, score, watts, combo_name, _ = self._rig_stats(rig_id)
+            created.append({
+                "name":       rig_name,
+                "score":      score,
+                "watts":      watts,
+                "parts":      rig_parts,
+                "combo_name": combo_name,
+            })
+
+        # ── Build result embed ─────────────────────────────────────────
+        total_score = sum(r["score"] for r in created)
+        embed = discord.Embed(
+            title=f"🤖 Auto-Build Complete — {len(created)} Rig{'s' if len(created) != 1 else ''} Assembled",
+            description=(
+                f"The AI consultant has spoken.\n"
+                f"**Consultant fee charged:** `{fee:.6f}` BTC (10% of balance)\n"
+                f"**Total rigs built:** `{len(created)}`\n"
+                f"**Combined compute score:** `{total_score:,.0f}`"
+            ),
+            color=0xF7931A,
+        )
+
+        for r in created:
+            types_present = {p["type"] for p in r["parts"]}
+            type_str = " · ".join(sorted(types_present))
+            combo_str = f"  🧬 **{r['combo_name']}**" if r["combo_name"] else ""
+            part_names = ", ".join(p["hw"]["name"] for p in r["parts"])
+            embed.add_field(
+                name=f"⚙️ {r['name']}",
+                value=(
+                    f"Score: `{r['score']:,.0f}` · Power: `{r['watts']:,.0f}W`\n"
+                    f"Types: `{type_str}`{combo_str}\n"
+                    f"*{part_names}*"
+                ),
+                inline=False,
+            )
+
+        parts_left = len(raw_inv) - (len(created) * PARTS_PER_RIG)
+        embed.set_footer(
+            text=f"{parts_left} part(s) left in inventory · Use /toggle_all_rigs on=True to start mining"
+        )
+        await interaction.followup.send(embed=embed)
+
+    # ── /build_all ────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="build_all",
+        description="Build as many rigs as possible from loose parts. Fast, dumb, free.",
+    )
+    @app_commands.describe(prefix="Name prefix for rigs (default: auto)")
+    async def build_all(self, interaction: discord.Interaction, prefix: str = "auto"):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer()
+
+        raw_inv = self.mdb.get_inventory(uid, gid)
+        if len(raw_inv) < PARTS_PER_RIG:
+            return await interaction.followup.send(
+                f"⚙️ Need at least **{PARTS_PER_RIG}** loose parts. You have **{len(raw_inv)}**.",
+                ephemeral=True,
+            )
+
+        # Sort by score desc, build rigs in batches of PARTS_PER_RIG
+        from game_engine import HARDWARE_LOOKUP, compute_score
+        pool = sorted(
+            [(inv_id, hw_id) for inv_id, hw_id in raw_inv if hw_id in HARDWARE_LOOKUP],
+            key=lambda x: compute_score(HARDWARE_LOOKUP[x[1]]),
+            reverse=True,
+        )
+
+        existing_names = {r[1] for r in self.mdb.get_rigs(uid, gid)}
+        counter = 1
+        built = 0
+        total_score = 0.0
+
+        while len(pool) >= PARTS_PER_RIG:
+            batch = pool[:PARTS_PER_RIG]
+            pool  = pool[PARTS_PER_RIG:]
+
+            name = f"{prefix}_{counter}"
+            while name in existing_names:
+                counter += 1
+                name = f"{prefix}_{counter}"
+            existing_names.add(name)
+
+            inv_ids = [inv_id for inv_id, _ in batch]
+            rig_id  = self.mdb.create_rig(uid, gid, name, inv_ids)
+            _, score, _, *_ = self._rig_stats(rig_id)
+            total_score += score
+            built += 1
+            counter += 1
+
+        parts_left = len(pool)
+        embed = discord.Embed(
+            title="⚙️ Build All Complete",
+            color=0x2ECC71,
+        )
+        embed.add_field(
+            name="Summary",
+            value=(
+                f"**Rigs built:** `{built:,}`\n"
+                f"**Combined score:** `{total_score:,.0f}`\n"
+                f"**Parts left over:** `{parts_left}`\n"
+                f"*Fast build — no diversity optimisation. Use `/auto_build` for smarter stacks.*"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"Use /toggle_all_rigs on=True to start mining")
+        await interaction.followup.send(embed=embed)
+
+    # ── /scrap_all ────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="scrap_all",
+        description="Scrap every rig you own and return all parts to inventory.",
+    )
+    async def scrap_all(self, interaction: discord.Interaction):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer()
+
+        rigs = self.mdb.get_rigs(uid, gid)
+        if not rigs:
+            return await interaction.followup.send(
+                "You don't own any rigs to scrap.", ephemeral=True
+            )
+
+        total_parts = 0
+        scrapped    = 0
+        for rig in rigs:
+            hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
+            if hw_ids is not None:
+                total_parts += len(hw_ids)
+                scrapped    += 1
+
+        embed = discord.Embed(
+            title="🔧 Scrap All Complete",
+            color=0xE74C3C,
+        )
+        embed.add_field(
+            name="Summary",
+            value=(
+                f"**Rigs scrapped:** `{scrapped:,}`\n"
+                f"**Parts returned to inventory:** `{total_parts:,}`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Use /build_all or /auto_build to rebuild.")
+        await interaction.followup.send(embed=embed)
+
+    # ── /scrap_num ────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="scrap_num",
+        description="Scrap the N lowest-scoring rigs and return parts to inventory.",
+    )
+    @app_commands.describe(count="Number of rigs to scrap (lowest score first)")
+    async def scrap_num(self, interaction: discord.Interaction, count: int):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer()
+
+        if count <= 0:
+            return await interaction.followup.send(
+                "Count must be a positive number.", ephemeral=True
+            )
+
+        rigs = self.mdb.get_rigs(uid, gid)
+        if not rigs:
+            return await interaction.followup.send(
+                "You don't own any rigs to scrap.", ephemeral=True
+            )
+
+        # Score all rigs, sort lowest first
+        scored = []
+        for r in rigs:
+            _, score, _, *_ = self._rig_stats(r[0])
+            scored.append((score, r))
+        scored.sort(key=lambda x: x[0])
+        to_scrap = scored[:count]
+
+        total_parts = 0
+        scrapped    = 0
+        for _, rig in to_scrap:
+            hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
+            if hw_ids is not None:
+                total_parts += len(hw_ids)
+                scrapped    += 1
+
+        lowest  = to_scrap[0][0]  if to_scrap else 0
+        highest = to_scrap[-1][0] if to_scrap else 0
+
+        embed = discord.Embed(
+            title=f"🔧 Scrapped {scrapped:,} Lowest-Scoring Rigs",
+            color=0xE67E22,
+        )
+        embed.add_field(
+            name="Summary",
+            value=(
+                f"**Rigs scrapped:** `{scrapped:,}` of `{len(rigs):,}` total\n"
+                f"**Score range:** `{lowest:,.0f}` – `{highest:,.0f}`\n"
+                f"**Parts returned:** `{total_parts:,}`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"{len(rigs) - scrapped:,} rigs remaining.")
+        await interaction.followup.send(embed=embed)
+
+    # ── /sell_all_parts ───────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="sell_all_parts",
+        description="Sell every loose part in your inventory for BTC.",
+    )
+    async def sell_all_parts(self, interaction: discord.Interaction):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer()
+
+        raw_inv = self.mdb.get_inventory(uid, gid)
+        if not raw_inv:
+            return await interaction.followup.send(
+                "Your inventory is empty — nothing to sell.", ephemeral=True
+            )
+
+        # Bulk sell — same optimised path as standalone sell_part_all
+        total_btc   = 0.0
+        rarity_counts = {}
+        inv_ids_to_delete = []
+
+        for inv_id, hw_id in raw_inv:
+            hw = HARDWARE_LOOKUP.get(hw_id)
+            if hw is None:
+                continue
+            rarity     = hw.get("rarity", "common")
+            score      = compute_score(hw)
+            sell_price = round(RARITY_PRICE_MULT.get(rarity, 0.002) * max(score, 1) * 0.5, 6)
+            total_btc += sell_price
+            rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
+            inv_ids_to_delete.append(inv_id)
+
+        self.mdb.remove_hardware_bulk(inv_ids_to_delete, uid, gid)
+        self.mdb.add_btc(uid, gid, total_btc)
+
+        price      = self._get_btc_price(gid)
+        btc_bal    = self.mdb.get_btc_balance(uid, gid)
+        cred_value = total_btc * price
+
+        embed = discord.Embed(
+            title="💰 Sell All Parts Complete",
+            color=0xF7931A,
+        )
+        embed.add_field(
+            name="Summary",
+            value=(
+                f"**Parts sold:** `{len(inv_ids_to_delete):,}`\n"
+                f"**Total earned:** `{total_btc:,.6f}` BTC\n"
+                f"**Market value:** `{cred_value:,.2f}` credits (at `{price:,.2f}`/BTC)"
+            ),
+            inline=False,
+        )
+
+        # Rarity breakdown
+        breakdown = ""
+        for rarity in RARITY_ORDER:
+            if rarity in rarity_counts:
+                emoji = RARITY_EMOJI.get(rarity, "⚪")
+                breakdown += f"{emoji} {rarity.title()}: `{rarity_counts[rarity]:,}`\n"
+        if breakdown:
+            embed.add_field(name="By Rarity", value=breakdown, inline=False)
+
+        embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC")
+        await interaction.followup.send(embed=embed)
+
     # ── /my_rigs ─────────────────────────────────────────────────────────
 
     @app_commands.command(
@@ -1137,7 +1334,7 @@ class TrashCollector(commands.Cog):
                 )
 
             rig_id, rig_name, is_running, started_at, last_collected, total_mined = rig
-            parts, score, watts = self._rig_stats(rig_id)
+            parts, score, watts, combo_name, combo_desc = self._rig_stats(rig_id)
             elec_hr = watts * ELECTRICITY_RATE
 
             if is_running and last_collected:
@@ -1219,6 +1416,13 @@ class TrashCollector(commands.Cog):
                 inline=False,
             )
 
+            if combo_name:
+                embed.add_field(
+                    name=f"\U0001f9ec Combo Bonus — {combo_name}",
+                    value=combo_desc or "Heterogeneous stack synergy active.",
+                    inline=False,
+                )
+
             embed.add_field(
                 name="\U0001f30d Environmental Destruction",
                 value=(
@@ -1246,8 +1450,15 @@ class TrashCollector(commands.Cog):
         offline_count = 0
         rig_lines = []
 
-        for rig_id, rig_name, is_running, started_at, last_collected, total_mined in rigs:
-            parts, score, watts = self._rig_stats(rig_id)
+        # Pre-score every rig so we can sort highest score first
+        scored_rigs = []
+        for r in rigs:
+            rig_id = r[0]
+            _, score, watts, *_ = self._rig_stats(rig_id)
+            scored_rigs.append((score, watts, r))
+        scored_rigs.sort(key=lambda x: x[0], reverse=True)
+
+        for score, watts, (rig_id, rig_name, is_running, started_at, last_collected, total_mined) in scored_rigs:
             total_score += score
             total_watts += watts if is_running else 0
             total_lifetime += total_mined
@@ -1323,7 +1534,7 @@ class TrashCollector(commands.Cog):
         electricity_cost = 0.0
         # If running, auto-collect pending earnings first
         if is_running and last_collected:
-            parts, score, watts = self._rig_stats(rig_id)
+            parts, score, watts, *_ = self._rig_stats(rig_id)
             hours = (time.time() - last_collected) / 3600.0
             collected_btc = score * MINING_RATE * hours
             electricity_cost = watts * ELECTRICITY_RATE * hours
@@ -1400,7 +1611,7 @@ class TrashCollector(commands.Cog):
 
         # If turning OFF, auto-collect pending earnings
         if was_running and rig[4]:
-            parts, score, watts = self._rig_stats(rig_id)
+            parts, score, watts, *_ = self._rig_stats(rig_id)
             hours = (time.time() - rig[4]) / 3600.0
             btc_mined = score * MINING_RATE * hours
             elec_cost = watts * ELECTRICITY_RATE * hours
@@ -1497,7 +1708,7 @@ class TrashCollector(commands.Cog):
 
             # If turning OFF a running rig, collect pending earnings first
             if was_running and not on and last_collected:
-                parts, score, watts = self._rig_stats(rig_id)
+                parts, score, watts, *_ = self._rig_stats(rig_id)
                 hours = (time.time() - last_collected) / 3600.0
                 btc_mined = score * MINING_RATE * hours
                 elec_cost = watts * ELECTRICITY_RATE * hours
@@ -1594,7 +1805,7 @@ class TrashCollector(commands.Cog):
         total_kwh_cycle = 0.0
 
         for rig_id, rig_name in running:
-            parts, score, watts = self._rig_stats(rig_id)
+            parts, score, watts, *_ = self._rig_stats(rig_id)
             bonus_btc = score * MINING_RATE * ACTIVE_MINING_MULTIPLIER
             bonus_elec = watts * ELECTRICITY_RATE
             total_btc += bonus_btc
@@ -1616,17 +1827,32 @@ class TrashCollector(commands.Cog):
         if total_kwh_cycle > 0:
             self.mdb.add_kwh(uid, gid, total_kwh_cycle)
 
+        # ── CPRM Assessment ───────────────────────────────────────────────
+        all_rigs = self.mdb.get_rigs(uid, gid)
+        total_rig_score = sum(
+            self._rig_stats(r[0])[1] for r in all_rigs
+        )
+        tier_info = assess_permit_tier(total_rig_score)
+        tier_num  = tier_info["tier"]
+
+        cprm_deducted = 0.0
+        cprm_applies  = (total_btc >= CPRM_THRESHOLD_BTC and tier_num > 0)
+        if cprm_applies:
+            cprm_deducted = total_btc * tier_info["cprm_rate"]
+            self.mdb.add_btc(uid, gid, -cprm_deducted)
+            self.mdb.add_cprm_contribution(uid, gid, cprm_deducted)
+
         new_credits = self.credit_db.get_credit(uid, gid)
         btc_bal = self.mdb.get_btc_balance(uid, gid)
         self.bot.dispatch("social_credit_change", interaction.user, new_credits)
 
         price = self._get_btc_price(gid)
-        value = total_btc * price
+        value = (total_btc - cprm_deducted) * price
 
         cycle_env = env_from_kwh(total_kwh_cycle)
 
         embed = discord.Embed(
-            title="\u26cf\ufe0f  Active Mining Cycle Complete!",
+            title="⛏️  Active Mining Cycle Complete!",
             color=0xF7931A,
         )
         embed.add_field(name="Rigs", value=f"{len(running)} rigs cranked", inline=True)
@@ -1634,16 +1860,130 @@ class TrashCollector(commands.Cog):
         embed.add_field(name="Electricity", value=f"`{total_elec:,.4f}` credits", inline=True)
         embed.add_field(name="Market Value", value=f"`{value:,.2f}` credits", inline=True)
         embed.add_field(
-            name="\U0001f30d Environmental Cost",
+            name="🌍 Environmental Cost",
             value=(
-                f"CO\u2082: `{cycle_env['co2_kg']:,.2f}` kg \u00b7 "
-                f"\U0001f334 Rainforest: `{cycle_env['rainforest_hectares']:.6f}` ha \u00b7 "
-                f"\U0001f333 Trees: `{cycle_env['trees_negated']:,.2f}`"
+                f"CO₂: `{cycle_env['co2_kg']:,.2f}` kg · "
+                f"🌴 Rainforest: `{cycle_env['rainforest_hectares']:.6f}` ha · "
+                f"🌳 Trees: `{cycle_env['trees_negated']:,.2f}`"
             ),
             inline=False,
         )
-        embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC \u00b7 Credits: {new_credits:,.1f}")
+        if cprm_applies:
+            embed.add_field(
+                name="🏛️ CPRM Deducted",
+                value=(
+                    f"`{cprm_deducted:,.6f}` BTC "
+                    f"({tier_info['cprm_rate']*100:.0f}% · Tier {tier_num} — {tier_info['name']})"
+                ),
+                inline=False,
+            )
+        embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC · Credits: {new_credits:,.1f}")
         await interaction.followup.send(embed=embed)
+
+    # ── /get_permit ───────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="get_permit",
+        description=(
+            "Apply for or renew your Business Accountability & Planning Act mining permit. "
+            "Fee paid in credits."
+        ),
+    )
+    async def get_permit(self, interaction: discord.Interaction):
+        import datetime as _dt
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer(ephemeral=True)
+
+        now = time.time()
+
+        # Assess current tier from total rig score
+        all_rigs = self.mdb.get_rigs(uid, gid)
+        total_score = 0.0
+        for r in all_rigs:
+            _, score, _, *_ = self._rig_stats(r[0])
+            total_score += score
+
+        tier_info  = assess_permit_tier(total_score)
+        tier_num   = tier_info["tier"]
+        tier_name  = tier_info["name"]
+        weekly_fee = tier_info["weekly_fee"]
+
+        if tier_num == 0:
+            return await interaction.followup.send(
+                "🏛️ **Ministry of Computational Prosperity**\n\n"
+                "The State has reviewed your operation and determined you are operating at "
+                "**Hobbyist (Exempt)** scale.\n\n"
+                "No permit is required at this time. The State will continue monitoring your activity. "
+                "That is all.",
+                ephemeral=True,
+            )
+
+        # Check existing permit
+        existing_tier, existing_expires, existing_score = self.mdb.get_permit(uid, gid)
+        credits = self.credit_db.get_credit(uid, gid)
+
+        if credits < weekly_fee:
+            return await interaction.followup.send(
+                f"🏛️ **Ministry of Computational Prosperity — Application Denied**\n\n"
+                f"Your application for a **Tier {tier_num} — {tier_name}** permit has been reviewed.\n\n"
+                f"**Required fee:** `{weekly_fee:,.0f}` credits\n"
+                f"**Your balance:** `{credits:,.1f}` credits\n\n"
+                f"Insufficient funds. Your operation is currently in violation of Schedule 4 "
+                f"of the Business Accountability & Planning Act.\n\n"
+                f"*The Ministry recommends you acquire more credits before reapplying. "
+                f"Continued non-compliance has been noted.*",
+                ephemeral=True,
+            )
+
+        # Deduct fee and issue/renew permit
+        # If renewing before expiry, add 7 days from current expiry; otherwise from now
+        base_time = max(now, existing_expires) if existing_expires > now else now
+        new_expires = base_time + (PERMIT_DURATION_DAYS * 86400)
+        self.credit_db.update_credit(uid, gid, -weekly_fee)
+        self.credit_db.add_to_slush_fund(gid, weekly_fee)  # fee goes straight to State coffers
+        self.mdb.upsert_permit(uid, gid, tier_num, new_expires, total_score)
+
+        new_credits = self.credit_db.get_credit(uid, gid)
+        expiry_str  = _dt.datetime.fromtimestamp(new_expires).strftime("%Y-%m-%d %H:%M UTC")
+        renewed     = existing_expires > now
+
+        embed = discord.Embed(
+            title="🏛️ Ministry of Computational Prosperity",
+            description=(
+                f"{'Permit Renewed' if renewed else 'Permit Issued'} — "
+                f"**Tier {tier_num}: {tier_name}**"
+            ),
+            color=0xF7931A,
+        )
+        embed.add_field(
+            name="Permit Details",
+            value=(
+                f"**Tier:** {tier_num} — {tier_name}\n"
+                f"**Valid Until:** `{expiry_str}`\n"
+                f"**Duration:** {PERMIT_DURATION_DAYS} days\n"
+                f"**Fee Paid:** `{weekly_fee:,.0f}` credits"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Your Current Assessment",
+            value=(
+                f"**Total Rig Score:** `{total_score:,.0f}`\n"
+                f"**CPRM Rate:** `{tier_info['cprm_rate']*100:.0f}%` on collections over "
+                f"`{CPRM_THRESHOLD_BTC:.0f}` BTC\n"
+                f"**Credits Remaining:** `{new_credits:,.1f}`"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Official Notice",
+            value=f"*{tier_info['flavour']}*",
+            inline=False,
+        )
+        embed.set_footer(
+            text="You use electricity to make money. We use electricity to eat. We are not the same."
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ── /collect_btc (passive earnings) ──────────────────────────────────
 
@@ -1671,9 +2011,8 @@ class TrashCollector(commands.Cog):
         total_hours = 0.0
 
         for rig_id, name, _, started_at, last_collected, total_mined in running:
-            parts, score, watts = self._rig_stats(rig_id)
+            parts, score, watts, *_ = self._rig_stats(rig_id)
             hours = (now - (last_collected or now)) / 3600.0
-
             btc = score * MINING_RATE * hours
             elec = watts * ELECTRICITY_RATE * hours
             total_btc += btc
@@ -1712,15 +2051,52 @@ class TrashCollector(commands.Cog):
             if total_kwh_this_cycle > 0:
                 self.mdb.add_kwh(uid, gid, total_kwh_this_cycle * ratio)
 
+        # ── CPRM Assessment ───────────────────────────────────────────────
+        # Assess permit tier against current total rig score, then deduct
+        # the Computational Prosperity Redistribution Mechanism contribution
+        # if this collection exceeds the State's threshold.
+        all_rigs = self.mdb.get_rigs(uid, gid)
+        total_rig_score = 0.0
+        for r in all_rigs:
+            _, score, _, *_ = self._rig_stats(r[0])
+            total_rig_score += score
+
+        tier_info = assess_permit_tier(total_rig_score)
+        tier_num  = tier_info["tier"]
+        tier_name = tier_info["name"]
+
+        # Update permit record with current score
+        existing_tier, existing_expires, _ = self.mdb.get_permit(uid, gid)
+        if existing_expires == 0:
+            # No permit on record — issue a grace permit expiring now
+            # (player will need /get_permit to renew for next cycle)
+            import datetime as _dt
+            self.mdb.upsert_permit(uid, gid, tier_num, now, total_rig_score)
+        else:
+            self.mdb.upsert_permit(uid, gid, tier_num, existing_expires, total_rig_score)
+
+        permit_expires = self.mdb.get_permit(uid, gid)[1]
+        permit_valid   = permit_expires > now
+        permit_days_left = max(0, (permit_expires - now) / 86400)
+
+        # Deduct CPRM if collection is over threshold and tier > 0
+        cprm_deducted = 0.0
+        cprm_applies = (actual_btc >= CPRM_THRESHOLD_BTC and tier_num > 0)
+        if cprm_applies:
+            cprm_deducted = actual_btc * tier_info["cprm_rate"]
+            self.mdb.add_btc(uid, gid, -cprm_deducted)
+            self.mdb.add_cprm_contribution(uid, gid, cprm_deducted)
+
         new_credits = self.credit_db.get_credit(uid, gid)
-        btc_bal = self.mdb.get_btc_balance(uid, gid)
+        btc_bal     = self.mdb.get_btc_balance(uid, gid)
         self.bot.dispatch("social_credit_change", interaction.user, new_credits)
 
-        price = self._get_btc_price(gid)
+        price     = self._get_btc_price(gid)
         cycle_env = env_from_kwh(total_kwh_this_cycle)
 
+        # ── Embed ─────────────────────────────────────────────────────────
         embed = discord.Embed(
-            title="\u26a1 Mining Collection",
+            title="⚡ Mining Collection",
             color=0xE74C3C if shutdown else 0x2ECC71,
         )
 
@@ -1732,25 +2108,58 @@ class TrashCollector(commands.Cog):
         )
         if shutdown:
             summary += (
-                f"\n\n\u26a0\ufe0f **INSUFFICIENT FUNDS** \u2014 all rigs shut down!\n"
+                f"\n\n⚠️ **INSUFFICIENT FUNDS** — all rigs shut down!\n"
                 f"You could only afford `{actual_elec:,.4f}` of `{total_elec:,.4f}` electricity.\n"
                 f"Received `{actual_btc:,.6f}` of `{total_btc:,.6f}` BTC (partial)."
             )
         embed.add_field(name="Summary", value=summary, inline=False)
 
         embed.add_field(
-            name="\U0001f30d Environmental Cost",
+            name="🌍 Environmental Cost",
             value=(
-                f"**Energy Used:** `{cycle_env['kwh']:,.2f}` kWh \u00b7 "
-                f"**CO\u2082:** `{cycle_env['co2_kg']:,.2f}` kg\n"
-                f"\U0001f333 Trees: `{cycle_env['trees_negated']:,.2f}` \u00b7 "
-                f"\U0001f334 Rainforest: `{cycle_env['rainforest_hectares']:.6f}` ha\n"
+                f"**Energy Used:** `{cycle_env['kwh']:,.2f}` kWh · "
+                f"**CO₂:** `{cycle_env['co2_kg']:,.2f}` kg\n"
+                f"🌳 Trees: `{cycle_env['trees_negated']:,.2f}` · "
+                f"🌴 Rainforest: `{cycle_env['rainforest_hectares']:.6f}` ha\n"
                 f"*Was it worth it?*"
             ),
             inline=False,
         )
 
-        embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC \u00b7 Credits: {new_credits:,.1f}")
+        # CPRM / Permit status field
+        if tier_num == 0:
+            permit_text = (
+                f"**Tier 0 — {tier_name}**\n"
+                f"The State has not yet noticed your operation. Keep it that way.\n"
+                f"*No CPRM applicable · No permit required*"
+            )
+        else:
+            permit_status = (
+                f"✅ Valid ({permit_days_left:.1f}d remaining)"
+                if permit_valid
+                else "❌ **EXPIRED** — renew with `/get_permit`"
+            )
+            cprm_line = (
+                f"**CPRM Deducted:** `{cprm_deducted:,.6f}` BTC "
+                f"({tier_info['cprm_rate']*100:.0f}% of `{actual_btc:,.6f}`)"
+                if cprm_applies
+                else f"*Collection under {CPRM_THRESHOLD_BTC:.0f} BTC threshold — CPRM not triggered*"
+            )
+            permit_text = (
+                f"**Tier {tier_num} — {tier_name}**\n"
+                f"Permit: {permit_status}\n"
+                f"{cprm_line}"
+            )
+
+        embed.add_field(
+            name="🏛️ Ministry of Computational Prosperity",
+            value=permit_text,
+            inline=False,
+        )
+
+        embed.set_footer(
+            text=f"Wallet: {btc_bal:,.6f} BTC · Credits: {new_credits:,.1f}"
+        )
         await interaction.followup.send(embed=embed)
 
     # ── /btc_price ───────────────────────────────────────────────────────

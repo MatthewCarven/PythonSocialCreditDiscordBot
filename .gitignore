@@ -1,3 +1,10 @@
-.env__pycache__ 
+.env
+__pycache__ 
 __pycache__ 
 __pycache__/ 
+*.pyc
+*.db
+*.exe
+*.zip
+standalone_data/
+.~lock.*
