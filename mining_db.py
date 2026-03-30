@@ -133,6 +133,18 @@ class MiningDB:
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS materials_wallet (
+                    user_id     INTEGER NOT NULL,
+                    guild_id    INTEGER NOT NULL,
+                    gold        REAL DEFAULT 0,
+                    copper      REAL DEFAULT 0,
+                    aluminium   REAL DEFAULT 0,
+                    pcb         REAL DEFAULT 0,
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+
             conn.commit()
 
     # ── Inventory ────────────────────────────────────────────────────────
@@ -581,6 +593,33 @@ class MiningDB:
                 (guild_id,)
             ).fetchall()
         return [r[0] for r in rows]
+
+    # ── Materials wallet ─────────────────────────────────────────────────────
+
+    def get_materials(self, user_id, guild_id):
+        """Return dict of material balances for a user."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT gold, copper, aluminium, pcb FROM materials_wallet WHERE user_id = ? AND guild_id = ?",
+                (user_id, guild_id)
+            ).fetchone()
+        if row:
+            return {"gold": row[0], "copper": row[1], "aluminium": row[2], "pcb": row[3]}
+        return {"gold": 0.0, "copper": 0.0, "aluminium": 0.0, "pcb": 0.0}
+
+    def add_materials(self, user_id, guild_id, gold=0.0, copper=0.0, aluminium=0.0, pcb=0.0):
+        """Add materials to a user's wallet (creates row if needed)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO materials_wallet (user_id, guild_id, gold, copper, aluminium, pcb)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, guild_id) DO UPDATE SET
+                    gold      = gold      + excluded.gold,
+                    copper    = copper    + excluded.copper,
+                    aluminium = aluminium + excluded.aluminium,
+                    pcb       = pcb       + excluded.pcb
+            """, (user_id, guild_id, gold, copper, aluminium, pcb))
+            conn.commit()
 
     def log_cprm_history(self, guild_id, date_str, total_collected,
                          state_overhead, total_redistributed):

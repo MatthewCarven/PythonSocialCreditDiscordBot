@@ -50,6 +50,8 @@ from game_engine import (
     combo_multiplier,
     # Business Accountability & Planning Act — permit system
     assess_permit_tier, CPRM_THRESHOLD_BTC, CPRM_OVERHEAD_RATE, PERMIT_DURATION_DAYS,
+    # Recycling
+    recycle_yield,
 )
 
 # =============================================================================
@@ -1324,6 +1326,93 @@ class TrashCollector(commands.Cog):
 
         embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC")
         await interaction.followup.send(embed=embed)
+
+    # ── /recycle ─────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="recycle",
+        description="Recycle a loose part into raw materials (gold, copper, aluminium, PCB).",
+    )
+    @app_commands.describe(inv_id="Inventory ID of the part to recycle (from /inventory)")
+    async def recycle(self, interaction: discord.Interaction, inv_id: int):
+        uid, gid = interaction.user.id, interaction.guild.id
+        await interaction.response.defer(ephemeral=True)
+
+        hw_id = self.mdb.get_hardware_by_id(inv_id, uid, gid)
+        if not hw_id:
+            return await interaction.followup.send(
+                f"⚠️ No part with inventory ID `{inv_id}` found in your inventory.",
+                ephemeral=True,
+            )
+
+        hw = HARDWARE_LOOKUP.get(hw_id)
+        if not hw:
+            return await interaction.followup.send(
+                f"⚠️ Unknown hardware ID `{hw_id}`. Cannot recycle.",
+                ephemeral=True,
+            )
+
+        yields = recycle_yield(hw)
+        self.mdb.remove_hardware(inv_id, uid, gid)
+        self.mdb.add_materials(
+            uid, gid,
+            gold=yields["gold"],
+            copper=yields["copper"],
+            aluminium=yields["aluminium"],
+            pcb=yields["pcb"],
+        )
+
+        rarity      = hw.get("rarity", "common")
+        rarity_emoji = RARITY_EMOJI.get(rarity, "⚪")
+
+        embed = discord.Embed(
+            title="♻️ Part Recycled",
+            description=(
+                f"{rarity_emoji} **{hw['name']}** has been responsibly recycled.\n"
+                f"*The State commends your contribution to the circular economy.*"
+            ),
+            color=0x2ECC71,
+        )
+        embed.add_field(
+            name="Materials Recovered",
+            value=(
+                f"🥇 **Gold:** `{yields['gold']:.4f}g`\n"
+                f"🟤 **Copper:** `{yields['copper']:.2f}g`\n"
+                f"⬜ **Aluminium:** `{yields['aluminium']:.2f}g`\n"
+                f"🟫 **PCB Fibreglass:** `{yields['pcb']:.1f}g`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Use /materials to check your total stockpile.")
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+    # ── /materials ────────────────────────────────────────────────────────
+
+    @app_commands.command(
+        name="materials",
+        description="Check your raw materials stockpile.",
+    )
+    async def materials(self, interaction: discord.Interaction):
+        uid, gid = interaction.user.id, interaction.guild.id
+        m = self.mdb.get_materials(uid, gid)
+
+        embed = discord.Embed(
+            title="♻️ Materials Stockpile",
+            description="*Raw materials recovered from recycled hardware.*",
+            color=0x95A5A6,
+        )
+        embed.add_field(
+            name="Current Stock",
+            value=(
+                f"🥇 **Gold:** `{m['gold']:.4f}g`\n"
+                f"🟤 **Copper:** `{m['copper']:.2f}g`\n"
+                f"⬜ **Aluminium:** `{m['aluminium']:.2f}g`\n"
+                f"🟫 **PCB Fibreglass:** `{m['pcb']:.1f}g`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="More uses for materials coming soon™ — The Ministry of Computational Prosperity")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── /my_rigs ─────────────────────────────────────────────────────────
 

@@ -86,14 +86,24 @@ def compute_score(hw: dict) -> float:
     else:
         raw_score = clock * ((bits or 8) / 8) * (cores or 1) * tmult * eb
 
-    # --- floor: Rick Sanchez wrote bitcoin_sieve for every chip ever fabbed ---
-    # No piece of silicon ever scores absolute zero.
-    # We use transistor count as a size-aware proxy so relative order is preserved:
-    # a chip with more transistors gets a slightly higher floor, and the era bonus
-    # means vintage rarity still counts. The 0.001 scale keeps this well below any
-    # chip that has real clock/cores data.
+    # --- transistor density bonus ---
+    # More silicon = more IPC, more parallelism, more everything.
+    # Soft multiplier capped at 3.5x (2.5 range above 1.0 base).
+    # log scale so billions of transistors feel meaningful but don't
+    # completely detach from clock/core reality.
+    # 50B transistors (A100-class) hits the cap. 275K (386) barely moves.
     try:    transistors = float(hw.get("transistors") or 0)
     except: transistors = 0.0
+
+    if transistors > 0:
+        density_bonus = 1.0 + (math.log2(transistors) / math.log2(50_000_000_000)) * 2.5
+        density_bonus = min(density_bonus, 3.5)  # hard cap
+    else:
+        density_bonus = 1.0
+
+    raw_score *= density_bonus
+
+    # --- floor: no piece of silicon ever scores absolute zero ---
     floor = math.log2(transistors + 2) * tmult * eb * 0.001
 
     score = max(raw_score, floor)
@@ -592,6 +602,44 @@ PERMIT_TIERS = [
         "Keep it that way.",
     ),
 ]
+
+
+# =============================================================================
+# RECYCLE YIELD
+# Breaks a hardware part down into raw materials.
+# Gold scales with rarity (connectors/pins).
+# Copper and aluminium scale with TDP (cooling hardware).
+# PCB fibreglass is a flat yield — every part has a board.
+# =============================================================================
+
+_GOLD_BY_RARITY = {
+    "common":    0.001,   # trace gold in basic contacts
+    "uncommon":  0.005,
+    "rare":      0.020,
+    "epic":      0.080,
+    "legendary": 0.300,   # dense connector arrays, gold-plated everything
+}
+
+def recycle_yield(hw: dict) -> dict:
+    """
+    Returns a dict of material yields in grams:
+    { gold, copper, aluminium, pcb }
+    """
+    rarity = hw.get("rarity", "common").lower()
+    try:    tdp = float(hw.get("tdp_watts") or 0)
+    except: tdp = 0.0
+
+    gold      = _GOLD_BY_RARITY.get(rarity, 0.001)
+    copper    = round(max(tdp * 0.15, 0.1), 4)   # heatpipes scale with heat
+    aluminium = round(max(tdp * 1.50, 0.5), 4)   # heatsink scales with heat
+    pcb       = 20.0                               # every part has a board
+
+    return {
+        "gold":      round(gold, 4),
+        "copper":    copper,
+        "aluminium": aluminium,
+        "pcb":       pcb,
+    }
 
 
 def assess_permit_tier(total_score: float) -> dict:
