@@ -57,6 +57,15 @@ from game_engine import (
 # =============================================================================
 # These values differ from the standalone game's economy.
 
+# =============================================================================
+# CPRM REDISTRIBUTION SPLIT
+# The State is always well-compensated. Adjust these to taste.
+# Must sum to 1.0.
+# =============================================================================
+CPRM_STATE_SHARE       = 0.25   # → slush fund (the State votes itself a raise)
+CPRM_CONTRIBUTOR_SHARE = 0.50   # → proportional to CPRM contributors (wealth begets wealth)
+CPRM_CITIZEN_SHARE     = 0.25   # → equal split among all registered citizens (optics)
+
 # Credits per watt per hour (Discord balance, not standalone $$$)
 ELECTRICITY_RATE = 0.001
 
@@ -599,25 +608,39 @@ class TrashCollector(commands.Cog):
             if not contributions:
                 continue
 
-            overhead      = pool_total * CPRM_OVERHEAD_RATE
-            redistributed = pool_total - overhead
-            total_contrib = sum(amt for _, amt in contributions)
+            # ── Three-tier redistribution ─────────────────────────────
+            # 1. State (slush fund)   — CPRM_STATE_SHARE
+            # 2. Contributors         — CPRM_CONTRIBUTOR_SHARE, proportional
+            # 3. All citizens         — CPRM_CITIZEN_SHARE, equal split
+            state_cut       = pool_total * CPRM_STATE_SHARE
+            contrib_pool    = pool_total * CPRM_CONTRIBUTOR_SHARE
+            citizen_pool    = pool_total * CPRM_CITIZEN_SHARE
+            total_contrib   = sum(amt for _, amt in contributions)
 
-            # Pay each contributor their proportional share back
+            # Tier 2 — proportional to contributors
             for user_id, contrib in contributions:
                 if total_contrib > 0:
-                    share = redistributed * (contrib / total_contrib)
+                    share = contrib_pool * (contrib / total_contrib)
                     self.mdb.add_btc(user_id, gid, share)
 
-            # Convert overhead BTC → credits at current market price
-            # and deposit into the guild slush fund.
+            # Tier 3 — equal split among all registered citizens
+            all_citizens  = self.mdb.get_all_users(gid)
+            citizen_count = len(all_citizens)
+            citizen_share = citizen_pool / citizen_count if citizen_count > 0 else 0.0
+            for user_id in all_citizens:
+                if citizen_share > 0:
+                    self.mdb.add_btc(user_id, gid, citizen_share)
+
+            # Tier 1 — State converts its cut to credits → slush fund
             btc_price      = self._get_btc_price(gid)
-            overhead_creds = overhead * btc_price
-            self.credit_db.add_to_slush_fund(gid, overhead_creds)
+            state_creds    = state_cut * btc_price
+            self.credit_db.add_to_slush_fund(gid, state_creds)
+            overhead_creds = state_creds  # kept for embed display
+            redistributed  = contrib_pool + citizen_pool
 
             date_str = datetime.date.today().isoformat()
             self.mdb.log_cprm_history(
-                gid, date_str, pool_total, overhead, redistributed
+                gid, date_str, pool_total, state_cut, redistributed
             )
             self.mdb.clear_cprm_pool(gid)
 
@@ -641,11 +664,13 @@ class TrashCollector(commands.Cog):
             embed.add_field(
                 name="📊 Today's CPRM Summary",
                 value=(
-                    f"**Total Collected:** `{pool_total:,.6f}` BTC\n"
-                    f"**Administrative Overhead (retained):** `{overhead:,.6f}` BTC "
-                    f"(`{overhead_creds:,.1f}` cr → slush fund)\n"
-                    f"**Redistributed to Compliant Operators:** `{redistributed:,.6f}` BTC\n"
-                    f"**Contributing Citizens:** `{len(contributions)}`"
+                    f"**Total Collected:** `{pool_total:,.6f}` BTC\n\n"
+                    f"🏛️ **State (25%):** `{state_cut:,.6f}` BTC "
+                    f"→ `{state_creds:,.1f}` cr slush fund\n"
+                    f"🎖️ **Contributors (50%):** `{contrib_pool:,.6f}` BTC "
+                    f"→ {len(contributions)} operators, proportional\n"
+                    f"👥 **Citizens' Dividend (25%):** `{citizen_pool:,.6f}` BTC "
+                    f"→ `{citizen_share:,.6f}` BTC each ({citizen_count:,} registered)"
                 ),
                 inline=False,
             )

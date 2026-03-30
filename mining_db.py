@@ -573,6 +573,15 @@ class MiningDB:
             conn.execute("DELETE FROM cprm_pool WHERE guild_id = ?", (guild_id,))
             conn.commit()
 
+    def get_all_users(self, guild_id):
+        """Return all user_ids that have a BTC wallet in this guild."""
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT user_id FROM btc_wallets WHERE guild_id = ?",
+                (guild_id,)
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def log_cprm_history(self, guild_id, date_str, total_collected,
                          state_overhead, total_redistributed):
         """Record the outcome of a daily redistribution."""
