@@ -31,7 +31,7 @@ wd_65c816,WDC 65C816,65C816-3.58MHz,Western Design Center,1984,3.58,16,1,CPU,300
 intel_80286,Intel 80286,i286-12.5MHz,Intel,1982,12.5,16,1,CPU,1500,134000,The IBM PC/AT processor. Protected mode begins.,rare,2.5,
 intel_80386_dx,Intel 80386DX,i386-DX-33MHz,Intel,1985,33.0,32,1,CPU,1000,275000,First 32-bit x86. The serious PC begins here.,rare,4.0,
 intel_80386_sx,Intel 80386SX,i386-SX-20MHz,Intel,1988,20.0,32,1,CPU,1000,275000,Budget 386 with 16-bit external bus.,common,3.0,
-intel_80486_dx,Intel 80486DX,i486-DX-33MHz,Intel,1989,33.0,32,1,CPU,1000,1200000,Integrated FPU and cache. The multimedia PC era dawns.,uncommon,5.0,
+intel_80486_dx,Intel 80486DX,i486-DX-33MHz,Intel,1989,50.0,32,1,CPU,1000,1200000,Integrated FPU and on-chip cache. Roughly 1.5x the IPC of a 386 at the same clock. The multimedia PC era dawns.,uncommon,5.0,
 intel_80486_dx2,Intel 80486DX2,i486-DX2-66MHz,Intel,1992,66.0,32,1,CPU,800,1200000,Clock-doubled 486. DOOM machine.,uncommon,7.5,
 intel_80486_dx4,Intel 80486DX4,i486-DX4-100MHz,Intel,1994,100.0,32,1,CPU,600,1600000,Triple-clocked 486. Last of its kind.,uncommon,10.0,
 intel_80487,Intel 80487SX FPU,i487SX-25MHz,Intel,1991,25.0,80,1,FPU,1000,1200000,Actually a full 486DX that disabled the SX. Sneaky Intel.,rare,7.5,
@@ -210,7 +210,7 @@ gba_arm7tdmi,ARM7TDMI (Game Boy Advance),ARM7TDMI-16.78MHz,ARM,2001,16.78,32,1,C
 psp_allegrex,Sony PSP Allegrex (MIPS R4000),Allegrex-333MHz,Sony,2004,333.0,32,1,CPU,90,0,PSP CPU. MIPS R4000 based. Portable 3D gaming pioneer.,uncommon,2.0,
 switch_tegra_x1,Nvidia Tegra X1 (Nintendo Switch),TegraX1-1.02GHz,Nvidia,2017,1020.0,64,4,SOC,20,0,Nintendo Switch SoC. 256 Maxwell CUDA cores. Portable BotW.,common,10.0,
 bitmain_s9,Bitmain Antminer S9 (BM1387),BM1387-ASIC,Bitmain,2016,600.0,32,189,ASIC,16,0,14 TH/s SHA-256. THE Bitcoin miner. Sold millions.,common,1400.0,13500000
-bitmain_s19_pro,Bitmain Antminer S19 Pro (BM1397),BM1397-ASIC,Bitmain,2020,800.0,32,256,ASIC,7,0,110 TH/s. 3250W. Industrial-scale Bitcoin mining.,uncommon,3250.0,110000000
+bitmain_s19_pro,Bitmain Antminer S19 Pro (BM1398),BM1398-ASIC,Bitmain,2020,800.0,32,256,ASIC,7,0,110 TH/s. 3250W. 76x BM1398BB per hashboard. Industrial-scale Bitcoin mining.,uncommon,3250.0,110000000
 bitmain_s21,Bitmain Antminer S21,BM1370-ASIC,Bitmain,2024,1000.0,32,300,ASIC,5,0,200 TH/s at 17.5 J/TH. State of the art mining efficiency.,common,3500.0,200000000
 sid_6581,MOS 6581 SID,SID-6581-1MHz,MOS Technology,1982,1.0,8,1,CUSTOM,7000,0,Commodore 64 sound chip. Synthesizer legend. Music icon.,legendary,0.4,
 yamaha_ym2612,Yamaha YM2612,YM2612-7.67MHz,Yamaha,1988,7.67,8,1,CUSTOM,3000,0,Sega Genesis FM synth. That iconic crunchy sound.,epic,0.5,
