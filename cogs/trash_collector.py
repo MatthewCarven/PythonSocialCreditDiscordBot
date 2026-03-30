@@ -7,9 +7,11 @@ Game logic is sourced from game_engine.py (synced from Trash Collector 2).
 This cog provides the Discord interface on top of that engine.
 """
 
+import asyncio
 import random
 import time
 import datetime
+from collections import deque
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -924,8 +926,7 @@ class TrashCollector(commands.Cog):
         uid, gid = interaction.user.id, interaction.guild.id
         await interaction.response.defer(ephemeral=False)
 
-        # ── Inventory ──────────────────────────────────────────────────
-        raw_inv = self.mdb.get_inventory(uid, gid)   # [(inv_id, hw_id), ...]
+        raw_inv = self.mdb.get_inventory(uid, gid)
         if len(raw_inv) < PARTS_PER_RIG:
             return await interaction.followup.send(
                 f"⚙️ You need at least **{PARTS_PER_RIG}** loose parts to auto-build. "
@@ -933,86 +934,84 @@ class TrashCollector(commands.Cog):
                 ephemeral=True,
             )
 
-        # ── Consultant fee ─────────────────────────────────────────────
         btc_balance = self.mdb.get_btc_balance(uid, gid)
-        fee = btc_balance * 0.10
-        if btc_balance <= 0 or fee <= 0:
-            fee = 0.0   # broke? fine, the AI works pro-bono this once
-        self.mdb.add_btc(uid, gid, -fee)
+        fee = btc_balance * 0.10 if btc_balance > 0 else 0.0
+        if fee > 0:
+            self.mdb.add_btc(uid, gid, -fee)
 
-        # ── Build candidate pool ───────────────────────────────────────
-        # Attach hw dict + score to each inventory row, sort best-first.
-        pool = []
-        for inv_id, hw_id in raw_inv:
-            hw = HARDWARE_LOOKUP.get(hw_id)
-            if hw is None:
-                continue
-            pool.append({
-                "inv_id": inv_id,
-                "hw_id":  hw_id,
-                "hw":     hw,
-                "type":   hw.get("type", "CPU").upper(),
-                "score":  compute_score(hw),
-            })
-        pool.sort(key=lambda x: x["score"], reverse=True)
+        def _do_auto_build():
+            DRAFT_ORDER = ["FPGA", "GPU", "CPU", "ASIC", "TPU",
+                           "NEUROMORPHIC", "DSP", "MCU", "MEMORY",
+                           "MOTHERBOARD", "DATACENTER", "ARRAY"]
 
-        # Preferred type order — FPGA anchors the combo bonus, GPU/CPU are
-        # the workhorses, ASIC + TPU unlock the deeper combo tiers.
-        DRAFT_ORDER = ["FPGA", "GPU", "CPU", "ASIC", "TPU",
-                       "NEUROMORPHIC", "DSP", "MCU", "MEMORY",
-                       "MOTHERBOARD", "DATACENTER", "ARRAY"]
+            # Score + sort all parts once — O(n log n)
+            pool = []
+            for inv_id, hw_id in raw_inv:
+                hw = HARDWARE_LOOKUP.get(hw_id)
+                if hw is None:
+                    continue
+                pool.append({
+                    "inv_id": inv_id,
+                    "hw":     hw,
+                    "type":   hw.get("type", "CPU").upper(),
+                    "score":  compute_score(hw),
+                })
+            pool.sort(key=lambda x: x["score"], reverse=True)
 
-        assembled_rigs = []   # list of lists of pool entries
-        used_inv_ids   = set()
+            # Deque buckets per type — O(1) pop from front
+            type_buckets = {}
+            for p in pool:
+                type_buckets.setdefault(p["type"], deque()).append(p)
+            overflow = deque(pool)  # fallback for fill slots
 
-        while True:
-            remaining = [p for p in pool if p["inv_id"] not in used_inv_ids]
-            if len(remaining) < PARTS_PER_RIG:
-                break
+            used = set()
+            assembled_rigs = []
 
-            # Draft one rig
-            rig_parts = []
-            drafted_types = set()
+            while len(pool) - len(used) >= PARTS_PER_RIG:
+                rig_parts    = []
+                drafted_types = set()
 
-            # Pass 1 — one of each preferred type, best score within type
-            for want_type in DRAFT_ORDER:
-                if len(rig_parts) >= PARTS_PER_RIG:
-                    break
-                candidates = [
-                    p for p in remaining
-                    if p["type"] == want_type
-                    and p["inv_id"] not in used_inv_ids
-                    and p["type"] not in drafted_types
-                ]
-                if candidates:
-                    pick = candidates[0]  # already sorted best-first
-                    rig_parts.append(pick)
-                    drafted_types.add(pick["type"])
-                    used_inv_ids.add(pick["inv_id"])
+                # Pass 1 — one of each preferred type, best score in bucket
+                for want_type in DRAFT_ORDER:
+                    if len(rig_parts) >= PARTS_PER_RIG:
+                        break
+                    bucket = type_buckets.get(want_type)
+                    if not bucket:
+                        continue
+                    while bucket and bucket[0]["inv_id"] in used:
+                        bucket.popleft()
+                    if bucket and want_type not in drafted_types:
+                        pick = bucket.popleft()
+                        rig_parts.append(pick)
+                        drafted_types.add(want_type)
+                        used.add(pick["inv_id"])
 
-            # Pass 2 — fill remaining slots with highest-score leftovers
-            for p in remaining:
-                if len(rig_parts) >= PARTS_PER_RIG:
-                    break
-                if p["inv_id"] not in used_inv_ids:
-                    rig_parts.append(p)
-                    used_inv_ids.add(p["inv_id"])
+                # Pass 2 — fill remaining slots from overflow
+                while len(rig_parts) < PARTS_PER_RIG and overflow:
+                    p = overflow.popleft()
+                    if p["inv_id"] not in used:
+                        rig_parts.append(p)
+                        used.add(p["inv_id"])
 
-            if len(rig_parts) == PARTS_PER_RIG:
-                assembled_rigs.append(rig_parts)
+                if len(rig_parts) == PARTS_PER_RIG:
+                    assembled_rigs.append(rig_parts)
+
+            return assembled_rigs
+
+        assembled_rigs = await asyncio.to_thread(_do_auto_build)
 
         if not assembled_rigs:
-            # Refund fee — nothing got built
-            self.mdb.add_btc(uid, gid, fee)
+            if fee > 0:
+                self.mdb.add_btc(uid, gid, fee)
             return await interaction.followup.send(
                 "⚙️ Couldn't assemble any complete rigs from your parts.",
                 ephemeral=True,
             )
 
-        # ── Determine next Auto-Rig number ────────────────────────────
-        existing_rigs = self.mdb.get_rigs(uid, gid)
-        existing_names = {r[1] for r in existing_rigs}
-        auto_counter = 1
+        # Create rigs in DB and collect stats
+        existing_names = {r[1] for r in self.mdb.get_rigs(uid, gid)}
+        auto_counter   = 1
+
         def next_auto_name():
             nonlocal auto_counter
             while True:
@@ -1022,53 +1021,49 @@ class TrashCollector(commands.Cog):
                     existing_names.add(candidate)
                     return candidate
 
-        # ── Create rigs in DB ──────────────────────────────────────────
         created = []
         for rig_parts in assembled_rigs:
             rig_name = next_auto_name()
             inv_ids  = [p["inv_id"] for p in rig_parts]
             rig_id   = self.mdb.create_rig(uid, gid, rig_name, inv_ids)
-            parts_hw = [p["hw"] for p in rig_parts]
             _, score, watts, combo_name, _ = self._rig_stats(rig_id)
             created.append({
-                "name":       rig_name,
-                "score":      score,
-                "watts":      watts,
-                "parts":      rig_parts,
-                "combo_name": combo_name,
+                "name": rig_name, "score": score, "watts": watts,
+                "parts": rig_parts, "combo_name": combo_name,
             })
 
-        # ── Build result embed ─────────────────────────────────────────
         total_score = sum(r["score"] for r in created)
         embed = discord.Embed(
             title=f"🤖 Auto-Build Complete — {len(created)} Rig{'s' if len(created) != 1 else ''} Assembled",
             description=(
                 f"The AI consultant has spoken.\n"
                 f"**Consultant fee charged:** `{fee:.6f}` BTC (10% of balance)\n"
-                f"**Total rigs built:** `{len(created)}`\n"
+                f"**Total rigs built:** `{len(created):,}`\n"
                 f"**Combined compute score:** `{total_score:,.0f}`"
             ),
             color=0xF7931A,
         )
 
-        for r in created:
-            types_present = {p["type"] for p in r["parts"]}
-            type_str = " · ".join(sorted(types_present))
-            combo_str = f"  🧬 **{r['combo_name']}**" if r["combo_name"] else ""
-            part_names = ", ".join(p["hw"]["name"] for p in r["parts"])
-            embed.add_field(
-                name=f"⚙️ {r['name']}",
-                value=(
-                    f"Score: `{r['score']:,.0f}` · Power: `{r['watts']:,.0f}W`\n"
-                    f"Types: `{type_str}`{combo_str}\n"
-                    f"*{part_names}*"
-                ),
-                inline=False,
-            )
+        # Only show per-rig breakdown for small builds — embeds have a 25-field limit
+        if len(created) <= 25:
+            for r in created:
+                types_present = {p["type"] for p in r["parts"]}
+                type_str  = " · ".join(sorted(types_present))
+                combo_str = f"  🧬 **{r['combo_name']}**" if r["combo_name"] else ""
+                part_names = ", ".join(p["hw"]["name"] for p in r["parts"])
+                embed.add_field(
+                    name=f"⚙️ {r['name']}",
+                    value=(
+                        f"Score: `{r['score']:,.0f}` · Power: `{r['watts']:,.0f}W`\n"
+                        f"Types: `{type_str}`{combo_str}\n"
+                        f"*{part_names}*"
+                    ),
+                    inline=False,
+                )
 
         parts_left = len(raw_inv) - (len(created) * PARTS_PER_RIG)
         embed.set_footer(
-            text=f"{parts_left} part(s) left in inventory · Use /toggle_all_rigs on=True to start mining"
+            text=f"{parts_left:,} part(s) left · Use /toggle_all_rigs on=True to start mining"
         )
         await interaction.followup.send(embed=embed)
 
@@ -1090,13 +1085,14 @@ class TrashCollector(commands.Cog):
                 ephemeral=True,
             )
 
-        # Sort by score desc, build rigs in batches of PARTS_PER_RIG
-        from game_engine import HARDWARE_LOOKUP, compute_score
-        pool = sorted(
-            [(inv_id, hw_id) for inv_id, hw_id in raw_inv if hw_id in HARDWARE_LOOKUP],
-            key=lambda x: compute_score(HARDWARE_LOOKUP[x[1]]),
-            reverse=True,
-        )
+        # Sort by score desc in thread — O(n log n), frees event loop
+        def _sort_pool():
+            return sorted(
+                [(inv_id, hw_id) for inv_id, hw_id in raw_inv if hw_id in HARDWARE_LOOKUP],
+                key=lambda x: compute_score(HARDWARE_LOOKUP[x[1]]),
+                reverse=True,
+            )
+        pool = await asyncio.to_thread(_sort_pool)
 
         existing_names = {r[1] for r in self.mdb.get_rigs(uid, gid)}
         counter = 1
@@ -1154,13 +1150,16 @@ class TrashCollector(commands.Cog):
                 "You don't own any rigs to scrap.", ephemeral=True
             )
 
-        total_parts = 0
-        scrapped    = 0
-        for rig in rigs:
-            hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
-            if hw_ids is not None:
-                total_parts += len(hw_ids)
-                scrapped    += 1
+        def _do_scrap_all():
+            total, count = 0, 0
+            for rig in rigs:
+                hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
+                if hw_ids is not None:
+                    total += len(hw_ids)
+                    count += 1
+            return total, count
+
+        total_parts, scrapped = await asyncio.to_thread(_do_scrap_all)
 
         embed = discord.Embed(
             title="🔧 Scrap All Complete",
@@ -1199,25 +1198,27 @@ class TrashCollector(commands.Cog):
                 "You don't own any rigs to scrap.", ephemeral=True
             )
 
-        # Score all rigs, sort lowest first
-        scored = []
-        for r in rigs:
-            _, score, _, *_ = self._rig_stats(r[0])
-            scored.append((score, r))
-        scored.sort(key=lambda x: x[0])
-        to_scrap = scored[:count]
+        # Score all rigs in thread, sort lowest first, scrap bottom N
+        def _do_scrap_num():
+            scored = []
+            for r in rigs:
+                _, score, _, *_ = self._rig_stats(r[0])
+                scored.append((score, r))
+            scored.sort(key=lambda x: x[0])
+            to_scrap = scored[:count]
+            total, scrapped = 0, 0
+            for _, rig in to_scrap:
+                hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
+                if hw_ids is not None:
+                    total += len(hw_ids)
+                    scrapped += 1
+            low  = to_scrap[0][0]  if to_scrap else 0
+            high = to_scrap[-1][0] if to_scrap else 0
+            return total, scrapped, low, high
 
-        total_parts = 0
-        scrapped    = 0
-        for _, rig in to_scrap:
-            hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
-            if hw_ids is not None:
-                total_parts += len(hw_ids)
-                scrapped    += 1
+        total_parts, scrapped, lowest, highest = await asyncio.to_thread(_do_scrap_num)
 
         lowest  = to_scrap[0][0]  if to_scrap else 0
-        highest = to_scrap[-1][0] if to_scrap else 0
-
         embed = discord.Embed(
             title=f"🔧 Scrapped {scrapped:,} Lowest-Scoring Rigs",
             color=0xE67E22,
@@ -1250,22 +1251,22 @@ class TrashCollector(commands.Cog):
                 "Your inventory is empty — nothing to sell.", ephemeral=True
             )
 
-        # Bulk sell — same optimised path as standalone sell_part_all
-        total_btc   = 0.0
-        rarity_counts = {}
-        inv_ids_to_delete = []
+        # Price calculation in thread — score loop can be heavy for large inventories
+        def _calc_sell():
+            btc, counts, ids = 0.0, {}, []
+            for inv_id, hw_id in raw_inv:
+                hw = HARDWARE_LOOKUP.get(hw_id)
+                if hw is None:
+                    continue
+                rarity = hw.get("rarity", "common")
+                score  = compute_score(hw)
+                price  = round(RARITY_PRICE_MULT.get(rarity, 0.002) * max(score, 1) * 0.5, 6)
+                btc   += price
+                counts[rarity] = counts.get(rarity, 0) + 1
+                ids.append(inv_id)
+            return btc, counts, ids
 
-        for inv_id, hw_id in raw_inv:
-            hw = HARDWARE_LOOKUP.get(hw_id)
-            if hw is None:
-                continue
-            rarity     = hw.get("rarity", "common")
-            score      = compute_score(hw)
-            sell_price = round(RARITY_PRICE_MULT.get(rarity, 0.002) * max(score, 1) * 0.5, 6)
-            total_btc += sell_price
-            rarity_counts[rarity] = rarity_counts.get(rarity, 0) + 1
-            inv_ids_to_delete.append(inv_id)
-
+        total_btc, rarity_counts, inv_ids_to_delete = await asyncio.to_thread(_calc_sell)
         self.mdb.remove_hardware_bulk(inv_ids_to_delete, uid, gid)
         self.mdb.add_btc(uid, gid, total_btc)
 
@@ -1688,89 +1689,90 @@ class TrashCollector(commands.Cog):
     @app_commands.describe(on="True = turn all rigs ON, False = turn all rigs OFF")
     async def toggle_all_rigs_cmd(self, interaction: discord.Interaction, on: bool):
         uid, gid = interaction.user.id, interaction.guild.id
-        rigs = self.mdb.get_rigs(uid, gid)
+        # Defer immediately — DB fetch + rig loop can be slow with many rigs
+        await interaction.response.defer()
 
-        if not rigs:
-            return await interaction.response.send_message(
-                "\u26cf\ufe0f You don't own any rigs yet.", ephemeral=True
-            )
+        def _do_toggle():
+            rigs = self.mdb.get_rigs(uid, gid)
+            if not rigs:
+                return None, 0, 0.0, 0.0
 
-        toggled = []
-        total_collected_btc = 0.0
-        total_elec_cost = 0.0
+            total_collected_btc = 0.0
+            total_elec_cost     = 0.0
+            toggled_count       = 0
+            now                 = time.time()
 
-        for rig_id, rig_name, is_running, started_at, last_collected, total_mined in rigs:
-            was_running = bool(is_running)
+            for rig_id, rig_name, is_running, started_at, last_collected, total_mined in rigs:
+                was_running = bool(is_running)
+                if was_running == on:
+                    continue
 
-            # Skip rigs already in the desired state
-            if was_running == on:
-                continue
+                # Turning OFF — collect pending earnings first
+                if was_running and not on and last_collected:
+                    _, score, watts, *_ = self._rig_stats(rig_id)
+                    hours     = (now - last_collected) / 3600.0
+                    btc_mined = score * MINING_RATE * hours
+                    elec_cost = watts * ELECTRICITY_RATE * hours
+                    kwh_used  = (watts / 1000.0) * hours
 
-            # If turning OFF a running rig, collect pending earnings first
-            if was_running and not on and last_collected:
-                parts, score, watts, *_ = self._rig_stats(rig_id)
-                hours = (time.time() - last_collected) / 3600.0
-                btc_mined = score * MINING_RATE * hours
-                elec_cost = watts * ELECTRICITY_RATE * hours
-                kwh_used = (watts / 1000.0) * hours
+                    current_credits = self.credit_db.get_credit(uid, gid)
+                    if current_credits < elec_cost and elec_cost > 0:
+                        ratio     = max(0, current_credits / elec_cost)
+                        btc_mined *= ratio
+                        elec_cost  = current_credits
+                        kwh_used  *= ratio
 
-                current_credits = self.credit_db.get_credit(uid, gid)
-                if current_credits < elec_cost:
+                    if btc_mined > 0:
+                        self.mdb.add_btc(uid, gid, btc_mined)
+                        self.mdb.update_rig_collection(rig_id, btc_mined)
                     if elec_cost > 0:
-                        ratio = max(0, current_credits / elec_cost)
-                    else:
-                        ratio = 1.0
-                    btc_mined *= ratio
-                    elec_cost = current_credits
-                    kwh_used *= ratio
+                        self.credit_db.update_credit(uid, gid, -elec_cost)
+                    if kwh_used > 0:
+                        self.mdb.add_kwh(uid, gid, kwh_used)
 
-                if btc_mined > 0:
-                    self.mdb.add_btc(uid, gid, btc_mined)
-                    self.mdb.update_rig_collection(rig_id, btc_mined)
-                if elec_cost > 0:
-                    self.credit_db.update_credit(uid, gid, -elec_cost)
-                if kwh_used > 0:
-                    self.mdb.add_kwh(uid, gid, kwh_used)
+                    total_collected_btc += btc_mined
+                    total_elec_cost     += elec_cost
 
-                total_collected_btc += btc_mined
-                total_elec_cost += elec_cost
+                self.mdb.set_rig_running(rig_id, uid, gid, on)
+                toggled_count += 1
 
-            self.mdb.set_rig_running(rig_id, uid, gid, on)
-            toggled.append(rig_name)
+            return rigs, toggled_count, total_collected_btc, total_elec_cost
 
-        if not toggled:
+        rigs, toggled_count, total_collected_btc, total_elec_cost = await asyncio.to_thread(_do_toggle)
+
+        if rigs is None:
+            return await interaction.followup.send("⛏️ You don't own any rigs yet.", ephemeral=True)
+
+        if toggled_count == 0:
             state_word = "online" if on else "offline"
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 f"All your rigs are already {state_word}.", ephemeral=True
             )
 
-        # Dispatch credit change event once if any electricity was paid
         if total_elec_cost > 0:
             new_credits = self.credit_db.get_credit(uid, gid)
             self.bot.dispatch("social_credit_change", interaction.user, new_credits)
 
         if on:
-            rig_list = ", ".join(f"**{n}**" for n in toggled)
             embed = discord.Embed(
-                title=f"\U0001f7e2 {len(toggled)} Rig{'s' if len(toggled) != 1 else ''} \u2014 ONLINE",
-                description=f"Started: {rig_list}",
+                title=f"🟢 {toggled_count:,} Rig{'s' if toggled_count != 1 else ''} — ONLINE",
+                description=f"All rigs are now mining.",
                 color=0x2ECC71,
             )
         else:
-            rig_list = ", ".join(f"**{n}**" for n in toggled)
-            desc = f"Stopped: {rig_list}"
+            desc = f"All rigs are now offline."
             if total_collected_btc > 0:
                 desc += (
-                    f"\n\nFinal collection: `+{total_collected_btc:,.6f}` BTC, "
-                    f"`-{total_elec_cost:,.4f}` electricity."
+                    f"\n\n**Final collection:** `+{total_collected_btc:,.6f}` BTC\n"
+                    f"**Electricity:** `-{total_elec_cost:,.4f}` credits"
                 )
             embed = discord.Embed(
-                title=f"\U0001f534 {len(toggled)} Rig{'s' if len(toggled) != 1 else ''} \u2014 OFFLINE",
+                title=f"🔴 {toggled_count:,} Rig{'s' if toggled_count != 1 else ''} — OFFLINE",
                 description=desc,
                 color=0xE74C3C,
             )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ── /mine (active mining, 1 hr cooldown) ─────────────────────────────
 
