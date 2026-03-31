@@ -419,7 +419,10 @@ class SocialCredit(commands.Cog):
 
 
 
-    @app_commands.command(name="decree", description="Issue a decree of gift or debt against another citizen.")
+    # /decree is temporarily disabled pending rework into a funded announcement
+    # system with a dedicated #decrees channel (single edited message, TV-channel
+    # style display, sorted by credit spend). Re-enable when ready.
+    # @app_commands.command(name="decree", description="Issue a decree of gift or debt against another citizen.")
     @app_commands.describe(target="The citizen the decree is against.", amount="The amount to give (positive) or take (negative).", reason="An optional reason for the decree.")
     async def decree(self, interaction: discord.Interaction, target: discord.Member, amount: float, reason: str = None):
         issuer = interaction.user
