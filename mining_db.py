@@ -206,13 +206,43 @@ class MiningDB:
             return row[0]
 
     def remove_hardware_bulk(self, inv_ids, user_id, guild_id):
+        """Delete the given inventory rows. Returns how many were actually deleted."""
         with sqlite3.connect(self.db_path) as conn:
             placeholders = ",".join("?" for _ in inv_ids)
-            conn.execute(
+            cursor = conn.execute(
                 f"DELETE FROM hardware_inventory WHERE id IN ({placeholders}) AND user_id = ? AND guild_id = ?",
                 (*inv_ids, user_id, guild_id),
             )
             conn.commit()
+            return cursor.rowcount
+
+    def sell_hardware_bulk(self, inv_ids, user_id, guild_id, total_btc):
+        """Atomically delete the given inventory rows and credit total_btc.
+
+        Both steps happen in one transaction, so a crash can never eat the
+        parts without paying out. Returns the number of parts sold, or None
+        (nothing deleted, no BTC credited) if the inventory changed since
+        the ids were collected — total_btc was priced against exactly those
+        parts, so a partial match would pay for hardware that isn't there.
+        """
+        if not inv_ids:
+            return None
+        with sqlite3.connect(self.db_path) as conn:
+            placeholders = ",".join("?" for _ in inv_ids)
+            cursor = conn.execute(
+                f"DELETE FROM hardware_inventory WHERE id IN ({placeholders}) AND user_id = ? AND guild_id = ?",
+                (*inv_ids, user_id, guild_id),
+            )
+            if cursor.rowcount != len(inv_ids):
+                conn.rollback()
+                return None
+            conn.execute(
+                """INSERT INTO btc_wallet (user_id, guild_id, balance) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, guild_id) DO UPDATE SET balance = balance + EXCLUDED.balance""",
+                (user_id, guild_id, total_btc),
+            )
+            conn.commit()
+            return len(inv_ids)
 
     # ── Rigs ─────────────────────────────────────────────────────────────
 
@@ -401,17 +431,19 @@ class MiningDB:
             conn.commit()
 
     def remove_btc(self, user_id, guild_id, amount):
-        """Remove BTC. Returns True if balance was sufficient."""
-        bal = self.get_btc_balance(user_id, guild_id)
-        if bal < amount:
-            return False
+        """Remove BTC. Returns True if balance was sufficient.
+
+        Check and decrement happen in one statement so two concurrent spends
+        can't both pass a stale balance check and overdraw the wallet.
+        """
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE btc_wallet SET balance = balance - ? WHERE user_id = ? AND guild_id = ?",
-                (amount, user_id, guild_id),
+            cursor = conn.execute(
+                "UPDATE btc_wallet SET balance = balance - ? "
+                "WHERE user_id = ? AND guild_id = ? AND balance >= ?",
+                (amount, user_id, guild_id, amount),
             )
             conn.commit()
-        return True
+            return cursor.rowcount > 0
 
     # ── BTC Market ───────────────────────────────────────────────────────
 
@@ -589,7 +621,7 @@ class MiningDB:
         """Return all user_ids that have a BTC wallet in this guild."""
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
-                "SELECT DISTINCT user_id FROM btc_wallets WHERE guild_id = ?",
+                "SELECT DISTINCT user_id FROM btc_wallet WHERE guild_id = ?",
                 (guild_id,)
             ).fetchall()
         return [r[0] for r in rows]

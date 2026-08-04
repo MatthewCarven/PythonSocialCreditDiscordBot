@@ -84,6 +84,8 @@ RARITY_COLOR = {
     "common":    0x95A5A6,
 }
 
+# Ministry of Computational Prosperity logo
+MINISTRY_LOGO_URL = "https://github.com/MatthewCarven/PythonSocialCreditDiscordBot/blob/main/logo512px.png?raw=true"
 
 # =============================================================================
 # DISCORD-FLAVOURED ENVIRONMENTAL FUNCTIONS
@@ -339,34 +341,71 @@ class RigBuilderView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
-class SellConfirmView(discord.ui.View):
+class _ConfirmViewBase(discord.ui.View):
+    """Shared plumbing for confirm/cancel prompts: owner check, double-click
+    guard, and visually disabling the buttons when the prompt times out."""
+
+    denial = "🚫 Not yours to decide, comrade."
+
+    def __init__(self, user_id):
+        super().__init__(timeout=30)
+        self.user_id = user_id
+        self.resolved = False
+        self.message = None  # set by the command after sending, for on_timeout
+
+    async def claim(self, interaction: discord.Interaction) -> bool:
+        """True only for the owner's first click — every button callback must
+        bail out when this returns False, or a double-click acts twice."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(self.denial, ephemeral=True)
+            return False
+        if self.resolved:
+            await interaction.response.defer()
+            return False
+        self.resolved = True
+        return True
+
+    def disable_all(self):
+        for child in self.children:
+            child.disabled = True
+
+    async def on_timeout(self):
+        if not self.resolved:
+            self.disable_all()
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except discord.HTTPException:
+                    pass
+
+
+class SellConfirmView(_ConfirmViewBase):
     """Confirmation prompt before selling a part."""
 
+    denial = "🚫 Not your sale."
+
     def __init__(self, cog, user_id, guild_id, inv_id, hw, sell_price):
-        super().__init__(timeout=30)
+        super().__init__(user_id)
         self.cog = cog
-        self.user_id = user_id
         self.guild_id = guild_id
         self.inv_id = inv_id
         self.hw = hw
         self.sell_price = sell_price
-        self.resolved = False
 
     @discord.ui.button(label="Confirm Sale", style=discord.ButtonStyle.danger)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("Not your sale.", ephemeral=True)
-        self.resolved = True
+        if not await self.claim(interaction):
+            return
 
-        removed = self.cog.mdb.remove_hardware(self.inv_id, self.user_id, self.guild_id)
-        if removed is None:
-            for child in self.children:
-                child.disabled = True
+        sold = self.cog.mdb.sell_hardware_bulk(
+            [self.inv_id], self.user_id, self.guild_id, self.sell_price
+        )
+        if sold is None:
+            self.disable_all()
             return await interaction.response.edit_message(
                 content="That part no longer exists in your inventory.", embed=None, view=self
             )
 
-        self.cog.mdb.add_btc(self.user_id, self.guild_id, self.sell_price)
         new_btc = self.cog.mdb.get_btc_balance(self.user_id, self.guild_id)
 
         rarity = self.hw.get("rarity", "common")
@@ -396,48 +435,38 @@ class SellConfirmView(discord.ui.View):
         m, s = divmod(remainder, 60)
         embed.set_footer(text=f"Market restock in {h}h {m}m {s}s")
 
-        for child in self.children:
-            child.disabled = True
+        self.disable_all()
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("Not your sale.", ephemeral=True)
-        self.resolved = True
-        for child in self.children:
-            child.disabled = True
+        if not await self.claim(interaction):
+            return
+        self.disable_all()
         await interaction.response.edit_message(content="Sale cancelled.", embed=None, view=self)
 
-    async def on_timeout(self):
-        if not self.resolved:
-            for child in self.children:
-                child.disabled = True
 
-
-class GiveConfirmView(discord.ui.View):
+class GiveConfirmView(_ConfirmViewBase):
     """Confirmation prompt before giving a part to another user."""
 
+    denial = "🚫 Not your gift."
+
     def __init__(self, cog, user_id, guild_id, inv_id, hw, recipient):
-        super().__init__(timeout=30)
+        super().__init__(user_id)
         self.cog = cog
-        self.user_id = user_id
         self.guild_id = guild_id
         self.inv_id = inv_id
         self.hw = hw
         self.recipient = recipient
-        self.resolved = False
 
     @discord.ui.button(label="Confirm Gift", style=discord.ButtonStyle.success)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("Not your gift.", ephemeral=True)
-        self.resolved = True
+        if not await self.claim(interaction):
+            return
 
         success = self.cog.mdb.transfer_hardware(self.inv_id, self.user_id, self.guild_id, self.recipient.id)
         if not success:
-            for child in self.children:
-                child.disabled = True
+            self.disable_all()
             return await interaction.response.edit_message(
                 content="That part no longer exists in your inventory.", embed=None, view=self
             )
@@ -458,23 +487,200 @@ class GiveConfirmView(discord.ui.View):
             color=RARITY_COLOR.get(rarity, 0x95A5A6),
         )
 
-        for child in self.children:
-            child.disabled = True
+        self.disable_all()
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("Not your gift.", ephemeral=True)
-        self.resolved = True
-        for child in self.children:
-            child.disabled = True
+        if not await self.claim(interaction):
+            return
+        self.disable_all()
         await interaction.response.edit_message(content="Gift cancelled.", embed=None, view=self)
 
-    async def on_timeout(self):
-        if not self.resolved:
-            for child in self.children:
-                child.disabled = True
+
+class ScrapAllConfirmView(_ConfirmViewBase):
+    """Confirmation before scrapping every rig."""
+
+    denial = "🚫 Not your rigs, comrade."
+
+    def __init__(self, cog, user_id, guild_id, rigs):
+        super().__init__(user_id)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.rigs = rigs
+
+    @discord.ui.button(label="🗑️ Scrap All Rigs", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        await interaction.response.defer()
+
+        def _do_scrap_all():
+            total, count = 0, 0
+            for rig in self.rigs:
+                hw_ids = self.cog.mdb.scrap_rig(rig[0], self.user_id, self.guild_id)
+                if hw_ids is not None:
+                    total += len(hw_ids)
+                    count += 1
+            return total, count
+
+        total_parts, scrapped = await asyncio.to_thread(_do_scrap_all)
+
+        embed = discord.Embed(
+            title="🔧💥 Scrap All Complete",
+            color=0xE74C3C,
+        )
+        embed.add_field(
+            name="📊 Summary",
+            value=(
+                f"🏗️ **Rigs scrapped:** `{scrapped:,}`\n"
+                f"📦 **Parts returned to inventory:** `{total_parts:,}`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="🔄 Use /build_all or /auto_build to rebuild.")
+        self.disable_all()
+        await interaction.edit_original_response(content=None, embed=embed, view=self)
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        self.disable_all()
+        await interaction.response.edit_message(content="🛑 Scrap cancelled. Your rigs live another day.", embed=None, view=self)
+
+
+class ScrapNumConfirmView(_ConfirmViewBase):
+    """Confirmation before scrapping N lowest-scoring rigs."""
+
+    denial = "🚫 Not your rigs, comrade."
+
+    def __init__(self, cog, user_id, guild_id, to_scrap, total_rigs):
+        super().__init__(user_id)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.to_scrap = to_scrap          # list of (score, rig) tuples
+        self.total_rigs = total_rigs
+
+    @discord.ui.button(label="🗑️ Scrap Selected Rigs", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        await interaction.response.defer()
+
+        def _do_scrap():
+            total, scrapped = 0, 0
+            for _, rig in self.to_scrap:
+                hw_ids = self.cog.mdb.scrap_rig(rig[0], self.user_id, self.guild_id)
+                if hw_ids is not None:
+                    total += len(hw_ids)
+                    scrapped += 1
+            low  = self.to_scrap[0][0]  if self.to_scrap else 0
+            high = self.to_scrap[-1][0] if self.to_scrap else 0
+            return total, scrapped, low, high
+
+        total_parts, scrapped, lowest, highest = await asyncio.to_thread(_do_scrap)
+
+        embed = discord.Embed(
+            title=f"🔧📉 Scrapped {scrapped:,} Lowest-Scoring Rigs",
+            color=0xE67E22,
+        )
+        embed.add_field(
+            name="📊 Summary",
+            value=(
+                f"🏗️ **Rigs scrapped:** `{scrapped:,}` of `{self.total_rigs:,}` total\n"
+                f"📏 **Score range:** `{lowest:,.0f}` – `{highest:,.0f}`\n"
+                f"📦 **Parts returned:** `{total_parts:,}`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"🖥️ {self.total_rigs - scrapped:,} rigs remaining.")
+        self.disable_all()
+        await interaction.edit_original_response(content=None, embed=embed, view=self)
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        self.disable_all()
+        await interaction.response.edit_message(content="🛑 Scrap cancelled. The weak rigs survive... for now.", embed=None, view=self)
+
+
+class SellAllConfirmView(_ConfirmViewBase):
+    """Confirmation before selling every loose part for BTC."""
+
+    denial = "🚫 Not your parts, comrade."
+
+    def __init__(self, cog, user_id, guild_id, total_btc, rarity_counts, inv_ids, btc_price):
+        super().__init__(user_id)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.total_btc = total_btc
+        self.rarity_counts = rarity_counts
+        self.inv_ids = inv_ids
+        self.btc_price = btc_price
+
+    @discord.ui.button(label="💸 Sell All Parts", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        await interaction.response.defer()
+
+        # Atomic: delete + credit in one transaction. Aborts (returns None) if
+        # the inventory changed since the quote — the payout was priced against
+        # exactly these parts, so paying on a partial delete would mint BTC.
+        def _do_sell():
+            sold = self.cog.mdb.sell_hardware_bulk(
+                self.inv_ids, self.user_id, self.guild_id, self.total_btc
+            )
+            bal = self.cog.mdb.get_btc_balance(self.user_id, self.guild_id)
+            return sold, bal
+
+        sold, btc_bal = await asyncio.to_thread(_do_sell)
+        self.disable_all()
+
+        if sold is None:
+            return await interaction.edit_original_response(
+                content=(
+                    "🚫 Sale aborted — your inventory changed since this quote was made. "
+                    "Run `/sell_all_parts` again for a fresh price."
+                ),
+                embed=None, view=self,
+            )
+
+        cred_value = self.total_btc * self.btc_price
+
+        embed = discord.Embed(
+            title="💰🎉 Sell All Parts Complete",
+            color=0xF7931A,
+        )
+        embed.add_field(
+            name="📊 Summary",
+            value=(
+                f"🔩 **Parts sold:** `{len(self.inv_ids):,}`\n"
+                f"₿ **Total earned:** `{self.total_btc:,.6f}` BTC\n"
+                f"💵 **Market value:** `{cred_value:,.2f}` credits (at `{self.btc_price:,.2f}`/BTC)"
+            ),
+            inline=False,
+        )
+
+        breakdown = ""
+        for rarity in RARITY_ORDER:
+            if rarity in self.rarity_counts:
+                emoji = RARITY_EMOJI.get(rarity, "⚪")
+                breakdown += f"{emoji} {rarity.title()}: `{self.rarity_counts[rarity]:,}`\n"
+        if breakdown:
+            embed.add_field(name="📦 By Rarity", value=breakdown, inline=False)
+
+        embed.set_footer(text=f"👛 Wallet: {btc_bal:,.6f} BTC")
+        await interaction.edit_original_response(content=None, embed=embed, view=self)
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.claim(interaction):
+            return
+        self.disable_all()
+        await interaction.response.edit_message(content="🛑 Sale cancelled. Your parts remain in the warehouse.", embed=None, view=self)
 
 
 SORT_MODES = [
@@ -582,9 +788,7 @@ class TrashCollector(commands.Cog):
         self.mdb = MiningDB()
         self.credit_db = CreditDB()
         self._decree_channel_id = None  # set via /set_decree_channel or bot config
-
-    async def cog_load(self):
-        self.daily_state_decree.start()
+        self.daily_state_decree.start()  # matches lottery.py & backup_manager.py pattern
 
     def cog_unload(self):
         self.daily_state_decree.cancel()
@@ -655,46 +859,47 @@ class TrashCollector(commands.Cog):
                 top_lines.append(f"{rank}. **{name}** — `{amt:,.6f}` BTC contributed")
 
             embed = discord.Embed(
-                title="🏛️ MINISTRY OF COMPUTATIONAL PROSPERITY",
+                title="🏛️⚖️ MINISTRY OF COMPUTATIONAL PROSPERITY",
                 description=(
-                    "**DAILY REDISTRIBUTION ORDER**\n"
-                    f"*{date_str} — Issued under authority of the "
+                    "📢 **DAILY REDISTRIBUTION ORDER**\n"
+                    f"📅 *{date_str} — Issued under authority of the "
                     "Business Accountability & Planning Act, Schedule 4*"
                 ),
                 color=0xAA0000,
             )
+            embed.set_thumbnail(url=MINISTRY_LOGO_URL)
             embed.add_field(
                 name="📊 Today's CPRM Summary",
                 value=(
-                    f"**Total Collected:** `{pool_total:,.6f}` BTC\n\n"
+                    f"₿ **Total Collected:** `{pool_total:,.6f}` BTC\n\n"
                     f"🏛️ **State (25%):** `{state_cut:,.6f}` BTC "
-                    f"→ `{state_creds:,.1f}` cr slush fund\n"
+                    f"→ 💰 `{state_creds:,.1f}` cr slush fund\n"
                     f"🎖️ **Contributors (50%):** `{contrib_pool:,.6f}` BTC "
-                    f"→ {len(contributions)} operators, proportional\n"
+                    f"→ 👷 {len(contributions)} operators, proportional\n"
                     f"👥 **Citizens' Dividend (25%):** `{citizen_pool:,.6f}` BTC "
-                    f"→ `{citizen_share:,.6f}` BTC each ({citizen_count:,} registered)"
+                    f"→ 🪙 `{citizen_share:,.6f}` BTC each ({citizen_count:,} registered)"
                 ),
                 inline=False,
             )
             if top_lines:
                 embed.add_field(
-                    name="🎖️ Notable Contributors",
+                    name="🏆🎖️ Notable Contributors",
                     value="\n".join(top_lines),
                     inline=False,
                 )
             embed.add_field(
-                name="📜 Official Notice",
+                name="📜⚠️ Official Notice",
                 value=(
-                    "*Citizens are reminded that mining without a valid permit constitutes a "
+                    "*🚨 Citizens are reminded that mining without a valid permit constitutes a "
                     "Schedule 4 violation of the Business Accountability & Planning Act. "
                     "Renew your permit with* `/get_permit`*.*\n\n"
-                    "*The State thanks you for your Computational Prosperity Contributions. "
-                    "Your compliance has been noted.*"
+                    "*🙏 The State thanks you for your Computational Prosperity Contributions. "
+                    "✅ Your compliance has been noted.*"
                 ),
                 inline=False,
             )
             embed.set_footer(
-                text="You use electricity to make money. We use electricity to eat. We are not the same."
+                text="⚡ You use electricity to make money. We use electricity to eat. We are not the same. 🍽️"
             )
 
             # Find a suitable channel to post in
@@ -1174,34 +1379,21 @@ class TrashCollector(commands.Cog):
         rigs = self.mdb.get_rigs(uid, gid)
         if not rigs:
             return await interaction.followup.send(
-                "You don't own any rigs to scrap.", ephemeral=True
+                "🤷 You don't own any rigs to scrap.", ephemeral=True
             )
 
-        def _do_scrap_all():
-            total, count = 0, 0
-            for rig in rigs:
-                hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
-                if hw_ids is not None:
-                    total += len(hw_ids)
-                    count += 1
-            return total, count
-
-        total_parts, scrapped = await asyncio.to_thread(_do_scrap_all)
-
         embed = discord.Embed(
-            title="🔧 Scrap All Complete",
+            title="⚠️🗑️ Confirm Scrap All",
+            description=(
+                f"🚨 You are about to **scrap all `{len(rigs):,}` rigs** and "
+                f"return their parts to your inventory.\n\n"
+                f"🔩 All components will be disassembled and returned as loose parts.\n\n"
+                f"⏳ *This cannot be undone. You have 30 seconds to decide.*"
+            ),
             color=0xE74C3C,
         )
-        embed.add_field(
-            name="Summary",
-            value=(
-                f"**Rigs scrapped:** `{scrapped:,}`\n"
-                f"**Parts returned to inventory:** `{total_parts:,}`"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="Use /build_all or /auto_build to rebuild.")
-        await interaction.followup.send(embed=embed)
+        view = ScrapAllConfirmView(self, uid, gid, rigs)
+        view.message = await interaction.followup.send(embed=embed, view=view)
 
     # ── /scrap_num ────────────────────────────────────────────────────────
 
@@ -1216,51 +1408,46 @@ class TrashCollector(commands.Cog):
 
         if count <= 0:
             return await interaction.followup.send(
-                "Count must be a positive number.", ephemeral=True
+                "🔢 Count must be a positive number.", ephemeral=True
             )
 
         rigs = self.mdb.get_rigs(uid, gid)
         if not rigs:
             return await interaction.followup.send(
-                "You don't own any rigs to scrap.", ephemeral=True
+                "🤷 You don't own any rigs to scrap.", ephemeral=True
             )
 
-        # Score all rigs in thread, sort lowest first, scrap bottom N
-        def _do_scrap_num():
+        # Score all rigs in thread, sort lowest first, pick bottom N
+        def _score_rigs():
             scored = []
             for r in rigs:
                 _, score, _, *_ = self._rig_stats(r[0])
                 scored.append((score, r))
             scored.sort(key=lambda x: x[0])
-            to_scrap = scored[:count]
-            total, scrapped = 0, 0
-            for _, rig in to_scrap:
-                hw_ids = self.mdb.scrap_rig(rig[0], uid, gid)
-                if hw_ids is not None:
-                    total += len(hw_ids)
-                    scrapped += 1
-            low  = to_scrap[0][0]  if to_scrap else 0
-            high = to_scrap[-1][0] if to_scrap else 0
-            return total, scrapped, low, high
+            return scored[:count]
 
-        total_parts, scrapped, lowest, highest = await asyncio.to_thread(_do_scrap_num)
+        to_scrap = await asyncio.to_thread(_score_rigs)
 
-        lowest  = to_scrap[0][0]  if to_scrap else 0
+        if not to_scrap:
+            return await interaction.followup.send(
+                "🤔 No rigs to scrap after scoring.", ephemeral=True
+            )
+
+        low  = to_scrap[0][0]
+        high = to_scrap[-1][0]
         embed = discord.Embed(
-            title=f"🔧 Scrapped {scrapped:,} Lowest-Scoring Rigs",
+            title="⚠️📉 Confirm Scrap Lowest Rigs",
+            description=(
+                f"🚨 You are about to **scrap `{len(to_scrap):,}` rigs** "
+                f"(lowest-scoring out of `{len(rigs):,}` total).\n\n"
+                f"📏 **Score range:** `{low:,.0f}` – `{high:,.0f}`\n"
+                f"📦 Parts will be returned to inventory.\n\n"
+                f"⏳ *This cannot be undone. You have 30 seconds to decide.*"
+            ),
             color=0xE67E22,
         )
-        embed.add_field(
-            name="Summary",
-            value=(
-                f"**Rigs scrapped:** `{scrapped:,}` of `{len(rigs):,}` total\n"
-                f"**Score range:** `{lowest:,.0f}` – `{highest:,.0f}`\n"
-                f"**Parts returned:** `{total_parts:,}`"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text=f"{len(rigs) - scrapped:,} rigs remaining.")
-        await interaction.followup.send(embed=embed)
+        view = ScrapNumConfirmView(self, uid, gid, to_scrap, len(rigs))
+        view.message = await interaction.followup.send(embed=embed, view=view)
 
     # ── /sell_all_parts ───────────────────────────────────────────────────
 
@@ -1275,7 +1462,7 @@ class TrashCollector(commands.Cog):
         raw_inv = self.mdb.get_inventory(uid, gid)
         if not raw_inv:
             return await interaction.followup.send(
-                "Your inventory is empty — nothing to sell.", ephemeral=True
+                "📭 Your inventory is empty — nothing to sell.", ephemeral=True
             )
 
         # Price calculation in thread — score loop can be heavy for large inventories
@@ -1294,38 +1481,33 @@ class TrashCollector(commands.Cog):
             return btc, counts, ids
 
         total_btc, rarity_counts, inv_ids_to_delete = await asyncio.to_thread(_calc_sell)
-        self.mdb.remove_hardware_bulk(inv_ids_to_delete, uid, gid)
-        self.mdb.add_btc(uid, gid, total_btc)
 
-        price      = self._get_btc_price(gid)
-        btc_bal    = self.mdb.get_btc_balance(uid, gid)
-        cred_value = total_btc * price
+        btc_price  = self._get_btc_price(gid)
+        cred_value = total_btc * btc_price
 
-        embed = discord.Embed(
-            title="💰 Sell All Parts Complete",
-            color=0xF7931A,
-        )
-        embed.add_field(
-            name="Summary",
-            value=(
-                f"**Parts sold:** `{len(inv_ids_to_delete):,}`\n"
-                f"**Total earned:** `{total_btc:,.6f}` BTC\n"
-                f"**Market value:** `{cred_value:,.2f}` credits (at `{price:,.2f}`/BTC)"
-            ),
-            inline=False,
-        )
-
-        # Rarity breakdown
+        # Build preview breakdown
         breakdown = ""
         for rarity in RARITY_ORDER:
             if rarity in rarity_counts:
                 emoji = RARITY_EMOJI.get(rarity, "⚪")
                 breakdown += f"{emoji} {rarity.title()}: `{rarity_counts[rarity]:,}`\n"
-        if breakdown:
-            embed.add_field(name="By Rarity", value=breakdown, inline=False)
 
-        embed.set_footer(text=f"Wallet: {btc_bal:,.6f} BTC")
-        await interaction.followup.send(embed=embed)
+        embed = discord.Embed(
+            title="⚠️💸 Confirm Sell All Parts",
+            description=(
+                f"🚨 You are about to **sell `{len(inv_ids_to_delete):,}` parts** "
+                f"on the black market.\n\n"
+                f"₿ **Total payout:** `{total_btc:,.6f}` BTC\n"
+                f"💵 **Market value:** ≈ `{cred_value:,.2f}` credits\n\n"
+                f"⏳ *This cannot be undone. You have 30 seconds to decide.*"
+            ),
+            color=0xF7931A,
+        )
+        if breakdown:
+            embed.add_field(name="📦 By Rarity", value=breakdown, inline=False)
+
+        view = SellAllConfirmView(self, uid, gid, total_btc, rarity_counts, inv_ids_to_delete, btc_price)
+        view.message = await interaction.followup.send(embed=embed, view=view)
 
     # ── /recycle ─────────────────────────────────────────────────────────
 
@@ -2040,14 +2222,14 @@ class TrashCollector(commands.Cog):
 
         if credits < weekly_fee:
             return await interaction.followup.send(
-                f"🏛️ **Ministry of Computational Prosperity — Application Denied**\n\n"
-                f"Your application for a **Tier {tier_num} — {tier_name}** permit has been reviewed.\n\n"
-                f"**Required fee:** `{weekly_fee:,.0f}` credits\n"
-                f"**Your balance:** `{credits:,.1f}` credits\n\n"
-                f"Insufficient funds. Your operation is currently in violation of Schedule 4 "
+                f"🏛️❌ **Ministry of Computational Prosperity — Application Denied**\n\n"
+                f"📋 Your application for a **Tier {tier_num} — {tier_name}** permit has been reviewed.\n\n"
+                f"💳 **Required fee:** `{weekly_fee:,.0f}` credits\n"
+                f"👛 **Your balance:** `{credits:,.1f}` credits\n\n"
+                f"🚫 Insufficient funds. Your operation is currently in violation of Schedule 4 "
                 f"of the Business Accountability & Planning Act.\n\n"
-                f"*The Ministry recommends you acquire more credits before reapplying. "
-                f"Continued non-compliance has been noted.*",
+                f"*📝 The Ministry recommends you acquire more credits before reapplying. "
+                f"👁️ Continued non-compliance has been noted.*",
                 ephemeral=True,
             )
 
@@ -2064,40 +2246,41 @@ class TrashCollector(commands.Cog):
         renewed     = existing_expires > now
 
         embed = discord.Embed(
-            title="🏛️ Ministry of Computational Prosperity",
+            title="🏛️📋 Ministry of Computational Prosperity",
             description=(
-                f"{'Permit Renewed' if renewed else 'Permit Issued'} — "
+                f"{'🔄 Permit Renewed' if renewed else '✅ Permit Issued'} — "
                 f"**Tier {tier_num}: {tier_name}**"
             ),
             color=0xF7931A,
         )
+        embed.set_thumbnail(url=MINISTRY_LOGO_URL)
         embed.add_field(
-            name="Permit Details",
+            name="🪪 Permit Details",
             value=(
-                f"**Tier:** {tier_num} — {tier_name}\n"
-                f"**Valid Until:** `{expiry_str}`\n"
-                f"**Duration:** {PERMIT_DURATION_DAYS} days\n"
-                f"**Fee Paid:** `{weekly_fee:,.0f}` credits"
+                f"🏷️ **Tier:** {tier_num} — {tier_name}\n"
+                f"📅 **Valid Until:** `{expiry_str}`\n"
+                f"⏱️ **Duration:** {PERMIT_DURATION_DAYS} days\n"
+                f"💳 **Fee Paid:** `{weekly_fee:,.0f}` credits"
             ),
             inline=False,
         )
         embed.add_field(
-            name="Your Current Assessment",
+            name="🔍 Your Current Assessment",
             value=(
-                f"**Total Rig Score:** `{total_score:,.0f}`\n"
-                f"**CPRM Rate:** `{tier_info['cprm_rate']*100:.0f}%` on collections over "
+                f"🖥️ **Total Rig Score:** `{total_score:,.0f}`\n"
+                f"📈 **CPRM Rate:** `{tier_info['cprm_rate']*100:.0f}%` on collections over "
                 f"`{CPRM_THRESHOLD_BTC:.0f}` BTC\n"
-                f"**Credits Remaining:** `{new_credits:,.1f}`"
+                f"💰 **Credits Remaining:** `{new_credits:,.1f}`"
             ),
             inline=False,
         )
         embed.add_field(
-            name="Official Notice",
+            name="📜 Official Notice",
             value=f"*{tier_info['flavour']}*",
             inline=False,
         )
         embed.set_footer(
-            text="You use electricity to make money. We use electricity to eat. We are not the same."
+            text="⚡ You use electricity to make money. We use electricity to eat. We are not the same. 🍽️"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -2665,6 +2848,7 @@ class TrashCollector(commands.Cog):
 
         view = SellConfirmView(self, uid, gid, part_id, hw, sell_price)
         await interaction.response.send_message(embed=embed, view=view)
+        view.message = await interaction.original_response()
 
     # ── /give_part ─────────────────────────────────────────────────────────
 
@@ -2725,6 +2909,7 @@ class TrashCollector(commands.Cog):
 
         view = GiveConfirmView(self, uid, gid, part_id, hw, recipient)
         await interaction.response.send_message(embed=embed, view=view)
+        view.message = await interaction.original_response()
 
     # ── /btc_wallet ──────────────────────────────────────────────────────
 

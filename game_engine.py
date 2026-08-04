@@ -70,13 +70,15 @@ def compute_score(hw: dict) -> float:
     except: hashrate = 0.0
 
     # --- compute path (CPUs, GPUs, DSPs, etc.) ---
-    # Defensive: some CSV rows have empty strings for numeric fields; treat as 0.
-    try:    clock = float(hw.get("clock_mhz") or 0)
-    except: clock = 0.0
-    try:    bits  = float(hw.get("word_bits")  or 0)
-    except: bits  = 0.0
-    try:    cores = float(hw.get("cores")      or 0)
-    except: cores = 0.0
+    # Defensive: some CSV rows have empty strings for numeric fields.
+    # Unknown clock → 1 MHz (tiny but nonzero), unknown word size → assume
+    # 8-bit (ratio 1.0), unknown cores → single core.
+    try:    clock = float(hw.get("clock_mhz") or 1)
+    except: clock = 1.0
+    try:    bits  = float(hw.get("word_bits")  or 8)
+    except: bits  = 8.0
+    try:    cores = float(hw.get("cores")      or 1)
+    except: cores = 1.0
 
     if hashrate:
         # sqrt formula: convert MH/s → TH/s first, then sqrt, scale by 2000.
@@ -84,7 +86,7 @@ def compute_score(hw: dict) -> float:
         # so a 20 PH/s Mega-Rack actually dominates a 20 TH/s backyard shed.
         raw_score = math.sqrt(hashrate / 1_000_000) * 2000 * tmult * eb
     else:
-        raw_score = clock * ((bits or 8) / 8) * (cores or 1) * tmult * eb
+        raw_score = clock * (bits / 8) * cores * tmult * eb
 
     # --- transistor density bonus ---
     # More silicon = more IPC, more parallelism, more everything.
