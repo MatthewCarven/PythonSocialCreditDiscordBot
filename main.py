@@ -6,9 +6,15 @@ from dotenv import load_dotenv
 from database import CreditDB
 from messages import random_wrong_channel_message, random_bot_channel_message
 
+# Anchor all relative paths (.env, cogs/, *.db) to this file's folder,
+# so the bot behaves the same no matter which directory it's launched from.
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    raise SystemExit("DISCORD_TOKEN is not set — create a .env file containing DISCORD_TOKEN=<your bot token>.")
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -60,10 +66,6 @@ class MyBot(commands.Bot):
                     await interaction.channel.send(f"🚨 State Violation by {interaction.user.mention}! {random_wrong_channel_message()} **{abs(penalty):,.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
                     print(f"WARNING: Could not send penalty message in channel '{interaction.channel.name}' due to missing permissions.")
-
-        # CRUCIAL: This must be the last line. It ensures the bot actually processes
-        # the command after our custom logic has run.
-        await self.process_application_commands(interaction)
 
     async def on_message(self, message: discord.Message):
         # Ignore messages from bots (including ourselves)
