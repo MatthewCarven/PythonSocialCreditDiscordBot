@@ -47,6 +47,9 @@
 - Add confirm/decline dialogs to /scrap_all, /scrap_num, and /sell_all_parts — danger-style Views with 30s timeout, following existing SellConfirmView pattern (2026-04-02)
 - Wire ministry logo into decree embed and /get_permit embed — MINISTRY_LOGO_URL constant, set_thumbnail on both embeds (2026-04-02)
 
+### SocialCreditBot — Noise Library Swap (2026-08-05)
+- Replaced pyfastnoiselite with opensimplex in real_estate_views.py — pyfastnoiselite has no wheels past Python 3.12, forcing a source compile on 3.13+/3.14. opensimplex is pure Python (universal wheel, installs anywhere) and the same noise family the map already used. A small FBmNoise shim class reproduces the FastNoiseLite attribute API (seed/frequency/octaves/lacunarity/gain + get_noise), so _get_noise_values and all render code are untouched. Verified: normalised output, per-seed determinism, /map viewport ~36ms, /map_image ~7s, /map_image_super ~27s (both defer + run in executor, so slow is safe). NOTE: same seed now generates different terrain — run /reset_world when convenient
+
 ### SocialCreditBot — Command Cleanup & Docs (2026-08-05)
 - Removed the 21 grind-alias slash commands (/toil, /audit, /grind … /excavate) — each carried its own independent 1-hour cooldown on the same 10%-payout work scenario, so citizens could chain all 21 per hour. /work is now the single labor command; the multiplier plumbing that only existed for the aliases went with them. Frees ~21 of Discord's 100 global command slots (~75 now used)
 - Rewrote /help — new chapters for Mining Operations, Markets & Trading, Property & Lottery, and RPG Adventures (the manual previously only covered the credit economy); admin chapters updated for the new /restore_backup target parameter and backup rotation
@@ -82,6 +85,7 @@
 - [x] ~~Add confirm/decline dialog to /scrap_all and bulk destructive commands~~ — done (2026-04-02)
 - [x] ~~Wire ministry logo into decree embed and /get_permit (embed.set_thumbnail)~~ — done (2026-04-02)
 - [ ] Rework /decree as a funded announcement system — dedicated #decrees channel, single edited message (TV-channel style), sorted by credit spend
+- [ ] Give the map editor some love — deliberately deferred until Matthew settles the economy design in his head; revisit once the production-chain/materials economy items below take shape
 - [x] ~~Fix atomicity gap in /sell_all_parts~~ — done (2026-08-04): new `MiningDB.sell_hardware_bulk` deletes parts and credits BTC in one transaction, and aborts the whole sale if the inventory changed since the quote
 - [x] ~~Clean up double-message UX on /scrap_all and /scrap_num~~ — done (2026-08-04): confirm views now edit the original prompt in place via `edit_original_response`; timed-out prompts grey their buttons out
 

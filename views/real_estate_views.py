@@ -4,7 +4,7 @@ import random
 import io
 import asyncio
 from PIL import Image, ImageDraw, ImageFont
-from pyfastnoiselite.pyfastnoiselite import FastNoiseLite, NoiseType, FractalType
+from opensimplex import OpenSimplex
 import numpy as np
 from database import CreditDB
 
@@ -180,6 +180,36 @@ def _load_or_create_seed(db_path='real_estate_bot.db'):
     return seed, gen_type, width, height
 
 
+class FBmNoise:
+    """Stand-in for the old FastNoiseLite generators: OpenSimplex noise with
+    FBm octave summing. Pure Python (opensimplex ships universal wheels), so
+    it installs on any Python version without a compiler.
+
+    NOTE: values differ from FastNoiseLite's OpenSimplex2 for the same seed —
+    an existing world's terrain will reshuffle. /reset_world for a fresh map.
+    """
+
+    def __init__(self):
+        self.seed = 0
+        self.frequency = 0.01
+        self.fractal_octaves = 1
+        self.fractal_lacunarity = 2.0   # FastNoiseLite defaults
+        self.fractal_gain = 0.5
+        self._gen = None
+
+    def get_noise(self, x, y):
+        if self._gen is None:
+            self._gen = OpenSimplex(self.seed)   # lazy: seed is set after init
+        freq, amp = self.frequency, 1.0
+        total, max_amp = 0.0, 0.0
+        for _ in range(self.fractal_octaves):
+            total += self._gen.noise2(x * freq, y * freq) * amp
+            max_amp += amp
+            freq *= self.fractal_lacunarity
+            amp  *= self.fractal_gain
+        return total / max_amp   # normalised to [-1, 1], like FastNoiseLite
+
+
 def _init_generators(seed, gen_type='continental'):
     global _elev_gen, _warp_gen_x, _warp_gen_y, _temp_gen, _moist_gen
     global WORLD_PARAMS, WORLD_TYPE, SEED
@@ -187,40 +217,30 @@ def _init_generators(seed, gen_type='continental'):
     p  = GENERATION_TYPES.get(gen_type, GENERATION_TYPES['continental'])
     es = p.get('elev_scale', 1.0)
 
-    _elev_gen = FastNoiseLite()
+    _elev_gen = FBmNoise()
     _elev_gen.seed = seed
-    _elev_gen.noise_type     = NoiseType.NoiseType_OpenSimplex2
-    _elev_gen.fractal_type   = FractalType.FractalType_FBm
     _elev_gen.fractal_octaves    = 6
     _elev_gen.fractal_lacunarity = 2.0
     _elev_gen.fractal_gain       = 0.5
     _elev_gen.frequency = BASE_ELEV_FREQ / max(es, 0.1)
 
-    _warp_gen_x = FastNoiseLite()
+    _warp_gen_x = FBmNoise()
     _warp_gen_x.seed = seed + 500
-    _warp_gen_x.noise_type   = NoiseType.NoiseType_OpenSimplex2
-    _warp_gen_x.fractal_type = FractalType.FractalType_FBm
     _warp_gen_x.fractal_octaves = 3
     _warp_gen_x.frequency = WARP_FREQ
 
-    _warp_gen_y = FastNoiseLite()
+    _warp_gen_y = FBmNoise()
     _warp_gen_y.seed = seed + 700
-    _warp_gen_y.noise_type   = NoiseType.NoiseType_OpenSimplex2
-    _warp_gen_y.fractal_type = FractalType.FractalType_FBm
     _warp_gen_y.fractal_octaves = 3
     _warp_gen_y.frequency = WARP_FREQ
 
-    _temp_gen = FastNoiseLite()
+    _temp_gen = FBmNoise()
     _temp_gen.seed = seed + 1000
-    _temp_gen.noise_type   = NoiseType.NoiseType_OpenSimplex2
-    _temp_gen.fractal_type = FractalType.FractalType_FBm
     _temp_gen.fractal_octaves = 4
     _temp_gen.frequency = BASE_BIOME_FREQ
 
-    _moist_gen = FastNoiseLite()
+    _moist_gen = FBmNoise()
     _moist_gen.seed = seed + 2000
-    _moist_gen.noise_type   = NoiseType.NoiseType_OpenSimplex2
-    _moist_gen.fractal_type = FractalType.FractalType_FBm
     _moist_gen.fractal_octaves = 4
     _moist_gen.frequency = BASE_BIOME_FREQ
 

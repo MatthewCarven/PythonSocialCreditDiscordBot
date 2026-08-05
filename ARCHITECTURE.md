@@ -20,7 +20,7 @@ main.py                     ← entry point: bot class, cog loader, penalty list
 │   └── backup_manager.py   ← daily DB backups, rotation, restore command
 │
 ├── views/                  ← large discord.ui.View classes (rendering-heavy)
-│   ├── real_estate_views.py  (PIL + FastNoiseLite map rendering/navigation)
+│   ├── real_estate_views.py  (PIL + opensimplex map rendering/navigation)
 │   └── rpg_views.py          (PIL map rendering, combat/inventory UI)
 │
 ├── game_engine.py          ← ★ pure game logic for the trash collector (no Discord)
