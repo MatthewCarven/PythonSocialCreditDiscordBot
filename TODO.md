@@ -1,5 +1,5 @@
 # Master Project Todo List
-*Last updated: 2026-08-04*
+*Last updated: 2026-08-05*
 
 > Single source of truth for all projects under the MatthewCarven umbrella.
 > Projects: **SocialCreditBot** (hub) · **Trash Collector 2** (standalone terminal) · **Car Collector 2** (standalone Discord bot) · **Car Collector 2 Standalone** (future terminal edition)
@@ -46,6 +46,11 @@
 ### SocialCreditBot — UI/UX Improvements
 - Add confirm/decline dialogs to /scrap_all, /scrap_num, and /sell_all_parts — danger-style Views with 30s timeout, following existing SellConfirmView pattern (2026-04-02)
 - Wire ministry logo into decree embed and /get_permit embed — MINISTRY_LOGO_URL constant, set_thumbnail on both embeds (2026-04-02)
+
+### SocialCreditBot — Command Cleanup & Docs (2026-08-05)
+- Removed the 21 grind-alias slash commands (/toil, /audit, /grind … /excavate) — each carried its own independent 1-hour cooldown on the same 10%-payout work scenario, so citizens could chain all 21 per hour. /work is now the single labor command; the multiplier plumbing that only existed for the aliases went with them. Frees ~21 of Discord's 100 global command slots (~75 now used)
+- Rewrote /help — new chapters for Mining Operations, Markets & Trading, Property & Lottery, and RPG Adventures (the manual previously only covered the credit economy); admin chapters updated for the new /restore_backup target parameter and backup rotation
+- Added ARCHITECTURE.md — project family + sync pattern, cog map, database/table inventory, the social_credit_change event contract, the two cooldown systems, code conventions, and a new-game-system checklist
 
 ### Car Collector 2 — Bug Fixes
 - Fix electrical_repair crash — made gremlin_desc optional with validation, added /repair gremlin parameter to workshop cog, synced fix to standalone (2026-04-02)
