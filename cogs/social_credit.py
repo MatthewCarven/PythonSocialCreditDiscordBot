@@ -16,14 +16,12 @@ mdb = MiningDB()
 
 
 
-# Drop this class above your SocialCredit cog class
 class WorkAssignment(discord.ui.View):
-    def __init__(self, cog, user, level, multiplier=1.0):
-        super().__init__(timeout=60) 
+    def __init__(self, cog, user, level):
+        super().__init__(timeout=60)
         self.cog = cog
         self.user = user
-        self.level = level 
-        self.multiplier = multiplier # This shrinks the payout for grind commands!
+        self.level = level
 
     @discord.ui.button(label="Report & Comply", style=discord.ButtonStyle.success, emoji="🏭")
     async def honest_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -32,8 +30,7 @@ class WorkAssignment(discord.ui.View):
             return
 
         bonus = max(0, self.level) * 0.2
-        # Apply the multiplier to the final amount
-        amount = round((random.uniform(0.5, 1.5) + bonus) * self.multiplier, 1)
+        amount = round(random.uniform(0.5, 1.5) + bonus, 1)
 
         db.update_credit(interaction.user.id, interaction.guild.id, amount)
         new_score = db.get_credit(interaction.user.id, interaction.guild.id)
@@ -60,8 +57,7 @@ class WorkAssignment(discord.ui.View):
 
         if success:
             bonus = max(0, self.level) * 1.0
-            # Apply the multiplier to the reward
-            amount = round((random.uniform(3.0, 5.0) + bonus) * self.multiplier, 1)
+            amount = round(random.uniform(3.0, 5.0) + bonus, 1)
             db.update_credit(interaction.user.id, interaction.guild.id, amount)
             new_score = db.get_credit(interaction.user.id, interaction.guild.id)
             self.cog.bot.dispatch("social_credit_change", interaction.user, new_score)
@@ -72,9 +68,8 @@ class WorkAssignment(discord.ui.View):
             embed.set_footer(text=f"New Social Standing: {new_score:,.1f}")
 
         else:
-            penalty_multiplier = max(1, self.level) * 4.0 
-            # Apply the multiplier to the punishment
-            amount = round((random.uniform(2.0, 5.0) + penalty_multiplier) * self.multiplier, 1)
+            penalty_multiplier = max(1, self.level) * 4.0
+            amount = round(random.uniform(2.0, 5.0) + penalty_multiplier, 1)
             db.add_to_slush_fund(interaction.guild.id, amount)
             db.update_credit(interaction.user.id, interaction.guild.id, -amount)
             new_score = db.get_credit(interaction.user.id, interaction.guild.id)
@@ -100,7 +95,11 @@ class HelpDropdown(discord.ui.Select):
         options = [
             discord.SelectOption(label="General Overview", description="How the Social Credit system works.", emoji="ℹ️", value="general"),
             discord.SelectOption(label="Labor & Economy", description="How to earn (or lose) credits.", emoji="🏭", value="economy"),
+            discord.SelectOption(label="Mining Operations", description="Scavenge e-waste, build rigs, mine BTC.", emoji="⛏️", value="mining"),
+            discord.SelectOption(label="Markets & Trading", description="Parts market, BTC exchange, recycling.", emoji="💱", value="markets"),
             discord.SelectOption(label="The Tier List", description="View the official social hierarchy.", emoji="📊", value="tiers"),
+            discord.SelectOption(label="Property & Lottery", description="Claim land on the world map, gamble with the State.", emoji="🏠", value="property"),
+            discord.SelectOption(label="RPG Adventures", description="Explore maps, fight enemies, collect loot.", emoji="⚔️", value="rpg"),
             discord.SelectOption(label="User & Credit Admin", description="State Enforcer commands for managing users.", emoji="⚖️", value="user_admin"),
             discord.SelectOption(label="Word Management", description="Admin commands for managing keywords.", emoji="✍️", value="word_admin"),
             discord.SelectOption(label="Database Management", description="Admin commands for backups and restores.", emoji="💾", value="db_admin")
@@ -114,16 +113,30 @@ class HelpDropdown(discord.ui.Select):
         if selection == "general":
             embed.title = "ℹ️ Social Credit System"
             embed.description = "Welcome to the State. Your worth is measured in Social Credit.\n\nYou earn a passive **+0.1 credit** for every message you send. Good behavior allows you to climb the ranks, but poor behavior or corruption will drag you into the negative tiers."
-            embed.add_field(name="Basic Commands", value="`/profile` - Check your current status and rank\n`/leaderboard` - View the most compliant (and least compliant) citizens\n`/daily_ration` - Claim your free daily credit allowance\n`/give` - Transfer your credits to another citizen.")
-        
+            embed.add_field(name="Basic Commands", value="`/profile` - Check your current status, rank and BTC wallet\n`/leaderboard` - View the most compliant (and least compliant) citizens\n`/daily_ration` - Claim your free daily credit allowance\n`/give` - Transfer your credits to another citizen", inline=False)
+            embed.add_field(name="⚠️ Channel Discipline", value="If the server has a designated bot channel, using commands **outside** it — or chatting **inside** it — earns a **1 credit** fine. The State appreciates order.", inline=False)
+
         elif selection == "economy":
             embed.title = "🏭 Labor & Economy"
             embed.description = "Citizens are expected to contribute. You can perform tasks to earn credits, but beware the temptation to falsify records."
-            embed.add_field(name="Major Labor (1 Hour Cooldown)", value="`/work` - Standard labor with standard payouts.", inline=False)
-            base_grind_cmds = '`, `'.join(self.cog.grind_tasks[:4]) + '`...'
-            embed.add_field(name=f"Minor Tasks (1 Hour Cooldown, 10% Payout)", value=f"`/{base_grind_cmds}`", inline=False)
-            embed.add_field(name="High-Risk / Gambling", value="`/heist <user>` - Attempt to steal from another citizen.\n`/coinflip <amount> <guess>` - Bet credits on a coin toss.", inline=False)
+            embed.add_field(name="Labor (1 Hour Cooldown)", value="`/work` - Receive a work scenario, then choose: **Report & Comply** for a modest honest payout, or **Falsify & Skim** for a bigger reward at the risk of a scaling fine.", inline=False)
+            embed.add_field(name="High-Risk / Gambling (1 Hour Cooldown)", value="`/heist <user>` - Attempt to steal from another citizen.\n`/coinflip <amount> <guess>` - Bet credits on a coin toss.", inline=False)
             embed.set_footer(text="Warning: Getting caught skimming credits scales based on your rank.")
+
+        elif selection == "mining":
+            embed.title = "⛏️ Mining Operations"
+            embed.description = "The Ministry of Computational Prosperity permits private mining ventures — for a cut."
+            embed.add_field(name="The Loop", value="`/scavenge` - Dig through e-waste for hardware parts (2 hr cooldown)\n`/build_rig` / `/auto_build` / `/build_all` - Assemble parts into mining rigs\n`/toggle_rig` / `/toggle_all_rigs` - Power rigs on and off\n`/collect_btc` - Collect what your running rigs mined passively\n`/mine` - Crank your rigs by hand for a bonus cycle (1 hr cooldown)", inline=False)
+            embed.add_field(name="The Fleet", value="`/my_rigs` - List your rigs and their stats\n`/parts` - Browse your loose hardware inventory\n`/scrap_rig` / `/scrap_num` / `/scrap_all` - Disassemble rigs back into parts", inline=False)
+            embed.add_field(name="Paperwork", value="`/get_permit` - Buy a mining permit tier; unpermitted collections over the threshold are taxed at brutal CPRM rates. The Ministry posts a daily redistribution decree.", inline=False)
+            embed.set_footer(text="You use electricity to make money. We use electricity to eat. We are not the same.")
+
+        elif selection == "markets":
+            embed.title = "💱 Markets & Trading"
+            embed.description = "Everything has a price. Most of it is negotiable. None of it is tax-free."
+            embed.add_field(name="Parts Market", value="`/parts_market` - Browse the rotating hardware stock\n`/buy_part <slot>` - Purchase a listed part\n`/sell_part <id>` - Sell one of your parts for BTC\n`/sell_all_parts` - Liquidate your whole inventory\n`/give_part <id> <user>` - Gift a part to another citizen", inline=False)
+            embed.add_field(name="BTC Exchange", value="`/btc_price` - Check the current exchange rate\n`/buy_btc` / `/sell_btc` - Trade between credits and BTC\n`/btc_wallet` - View your BTC balance", inline=False)
+            embed.add_field(name="Recycling", value="`/recycle` - Break parts down into raw materials (gold, copper, aluminium, PCB)\n`/materials` - View your materials stockpile", inline=False)
 
         elif selection == "tiers":
             embed.title = "📊 Official State Hierarchy"
@@ -134,12 +147,25 @@ class HelpDropdown(discord.ui.Select):
             embed.description = f"**Positive Tiers:**\n{positive_tiers}\n\n**Negative Tiers:**\n{negative_tiers}"
             embed.set_footer(text="Your role will be updated automatically as you cross thresholds.")
 
+        elif selection == "property":
+            embed.title = "🏠 Property & Lottery"
+            embed.description = "The State generously allows citizens to hold land. Terms and conditions apply. Forever."
+            embed.add_field(name="World Map", value="`/map` - Explore the world tile by tile: navigate, inspect terrain, walk, and **claim land** with your credits\n`/map_image` - PNG overview centered on your location\n`/map_image_super` - Large PNG overview of the whole map\n`/tile_leaderboard` - The server's biggest landowners", inline=False)
+            embed.add_field(name="State Lottery", value="`/lottery` - Buy tickets or check status; a winner is drawn daily (10% State tax, naturally)\n`/slushfund` - Inspect the State's discretionary fund, fed by fines and taxes", inline=False)
+
+        elif selection == "rpg":
+            embed.title = "⚔️ RPG Adventures"
+            embed.description = "Sanctioned recreation for citizens in good standing."
+            embed.add_field(name="Adventuring", value="`/rpg_start` - Begin your adventure\n`/rpg_map` - Open the interactive map and move around\n`/rpg_stats` - View your character stats\n`/rpg_inventory` - View your items\n`/rpg_use <item>` - Use a consumable\n`/rpg_give <user> <item>` - Give an item to another player", inline=False)
+            embed.set_footer(text="Worlds are built by admins via the /rpg_admin_* command family.")
+
         elif selection == "user_admin":
             embed.title = "⚖️ User & Credit Admin"
             embed.description = "Only authorized personnel may use these commands."
             embed.color = discord.Color.dark_red()
             embed.add_field(name="/adjust_credit <user> <amount>", value="Manually add or subtract points from a citizen. Use negative numbers for penalties.", inline=False)
             embed.add_field(name="/reset_score <user>", value="Reset a citizen's Social Credit to 0.", inline=False)
+            embed.add_field(name="World Admin", value="`/reset_world` - Wipe and regenerate the property map\n`/rpg_admin_*` - Create and edit RPG maps, NPCs, enemies, chests and items", inline=False)
 
         elif selection == "word_admin":
             embed.title = "✍️ Word Management"
@@ -151,10 +177,10 @@ class HelpDropdown(discord.ui.Select):
 
         elif selection == "db_admin":
             embed.title = "💾 Database Management"
-            embed.description = "Commands to manage the database."
+            embed.description = "Commands to manage the State's records. Daily backups run automatically and rotate (newest 30 per database kept)."
             embed.color = discord.Color.dark_red()
-            embed.add_field(name="/force_backup [download]", value="Create a manual backup of the database, with an option to download it.", inline=False)
-            embed.add_field(name="/restore_backup <file>", value="Overwrite the live database with an uploaded `.db` backup file. **USE WITH CAUTION.**", inline=False)
+            embed.add_field(name="/force_backup [download]", value="Snapshot every State database (social credit, mining, RPG, property), with an option to download the files.", inline=False)
+            embed.add_field(name="/restore_backup <target> <file>", value="Overwrite the chosen database with an uploaded `.db` backup. The file is validated and the current data is snapshotted first — but still, **USE WITH CAUTION.**", inline=False)
 
 
         # Update the message with the newly selected embed
@@ -173,45 +199,7 @@ class HelpView(discord.ui.View):
 class SocialCredit(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.grind_tasks = [
-            "toil", "audit", "grind", "labor", "drudge", "slog",
-            "inspect", "patrol", "clean", "repair", "compile", "process", 
-            "file", "sort", "censor", "monitor", "report", "construct", 
-            "fabricate", "transcribe", "excavate"
-        ]
         self._load_tiers()
-        self._create_grind_commands()
-
-    def _create_grind_commands(self):
-        # This error handler is defined once and reused for all grind commands
-        async def on_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-            if isinstance(error, app_commands.CommandOnCooldown):
-                mins_left = error.retry_after / 60
-                await interaction.response.send_message(f"🚨 The State demands patience. Also we remind you that greed is a crime against the state.  Try this specific task again in **{mins_left:,.1f} minutes**.", ephemeral=True)
-
-        for task_name in self.grind_tasks:
-            # A factory is needed to correctly capture the task_name for the callback
-            def command_factory(name):
-                async def command_callback(interaction: discord.Interaction):
-                    await self.trigger_work_scenario(interaction, task_name=name, multiplier=0.1)
-                return command_callback
-
-            callback = command_factory(task_name)
-            
-            # Create the slash command
-            cmd = app_commands.Command(
-                name=task_name,
-                description=f"Perform the '{task_name}' minor task. (10% Payout)",
-                callback=callback
-            )
-            # Add cooldown
-            cmd = app_commands.checks.cooldown(1, 3600, key=lambda i: (i.guild_id, i.user.id))(cmd)
-            
-            # Attach the shared error handler
-            cmd.error(on_error)
-            
-            # Add the command to the cog
-            self.bot.tree.add_command(cmd, guild=None) # Add as global command
 
     def _load_tiers(self):
         with open('tiers.json', 'r') as f:
@@ -252,8 +240,7 @@ class SocialCredit(commands.Cog):
 
 
 # --- WORK COMMAND (Risk/Reward Mechanics) ---
-    async def trigger_work_scenario(self, interaction: discord.Interaction, task_name: str, multiplier: float):
-        """A shared function so we don't have to duplicate code for every command."""
+    async def trigger_work_scenario(self, interaction: discord.Interaction, task_name: str):
         xp = db.get_credit(interaction.user.id, interaction.guild.id)
         _, level = self.get_social_status(xp)
 
@@ -281,7 +268,7 @@ class SocialCredit(commands.Cog):
             color=discord.Color.blue()
         )
 
-        view = WorkAssignment(self, interaction.user, level, multiplier)
+        view = WorkAssignment(self, interaction.user, level)
         await interaction.response.send_message(embed=embed, view=view)
 
 
@@ -691,8 +678,9 @@ class SocialCredit(commands.Cog):
             description="Welcome to the State. Your worth is measured in Social Credit.\n\nYou earn a passive **+0.1 credit** for every message you send. Good behavior allows you to climb the ranks, but poor behavior or corruption will drag you into the negative tiers.",
             color=discord.Color.blue()
         )
-        embed.add_field(name="Basic Commands", value="`/profile` - Check your current status and rank\n`/leaderboard` - View the most compliant (and least compliant) citizens\n`/daily_ration` - Claim your free daily credit allowance")
-        
+        embed.add_field(name="Basic Commands", value="`/profile` - Check your current status, rank and BTC wallet\n`/leaderboard` - View the most compliant (and least compliant) citizens\n`/daily_ration` - Claim your free daily credit allowance\n`/give` - Transfer your credits to another citizen", inline=False)
+        embed.set_footer(text="Select a chapter below for mining, markets, property, RPG and admin commands.")
+
         view = HelpView(self)
         await interaction.response.send_message(embed=embed, view=view)
 
@@ -751,11 +739,11 @@ class SocialCredit(commands.Cog):
     
     
     
-    # The main work command (100% payout, 1 hour cooldown)
+    # The main work command (1 hour cooldown)
     @app_commands.command(name="work", description="Perform major labor for the State.")
     @app_commands.checks.cooldown(1, 3600, key=lambda i: (i.guild_id, i.user.id))
     async def work(self, interaction: discord.Interaction):
-        await self.trigger_work_scenario(interaction, task_name="work", multiplier=1.0)
+        await self.trigger_work_scenario(interaction, task_name="work")
 
 # --- 4. THE GLOBAL COOLDOWN HANDLER ---
     # Delete your old @work.error and @daily_ration.error functions and use this instead!
