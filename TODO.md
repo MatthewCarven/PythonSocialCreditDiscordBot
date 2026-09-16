@@ -47,6 +47,11 @@
 - Add confirm/decline dialogs to /scrap_all, /scrap_num, and /sell_all_parts — danger-style Views with 30s timeout, following existing SellConfirmView pattern (2026-04-02)
 - Wire ministry logo into decree embed and /get_permit embed — MINISTRY_LOGO_URL constant, set_thumbnail on both embeds (2026-04-02)
 
+### SocialCreditBot — Test Suite, CI & Market Fix (2026-09-16)
+- Fixed El Virtual price railing bug — update_btc_price reverted toward the engine's 50,000 base while clamped to 5–500, so the Discord market would have pinned at 500.00 forever after its first update (the cog's 50-credit override was a separate constant the engine function couldn't see). Now takes base_price as a parameter; caught before any live guild seeded a market row
+- Committed 86-test pytest suite (tests/) + GitHub Actions CI (Python 3.12/3.14) guarding game_engine, MiningDB and CreditDB — the synced files now protect both projects
+- Verified the trash-collector engine extraction and sync pattern were already complete; crossed off the stale prerequisite items
+
 ### SocialCreditBot — Noise Library Swap (2026-08-05)
 - Replaced pyfastnoiselite with opensimplex in real_estate_views.py — pyfastnoiselite has no wheels past Python 3.12, forcing a source compile on 3.13+/3.14. opensimplex is pure Python (universal wheel, installs anywhere) and the same noise family the map already used. A small FBmNoise shim class reproduces the FastNoiseLite attribute API (seed/frequency/octaves/lacunarity/gain + get_noise), so _get_noise_values and all render code are untouched. Verified: normalised output, per-seed determinism, /map viewport ~36ms, /map_image ~7s, /map_image_super ~27s (both defer + run in executor, so slow is safe). NOTE: same seed now generates different terrain — run /reset_world when convenient
 
@@ -107,6 +112,8 @@
 - [x] ~~Consider smarter slash-command syncing~~ — done (2026-09-16): the tree is fingerprinted (sha256 of the command payloads) and global sync only runs when the fingerprint changed since last boot; delete `.command_hash` and restart to force one. Verified sync/skip/re-sync against a real 22-command tree on discord.py 2.7
 
 ### Economy / Game Design — Cross-Project
+- [ ] Decide the standalone's El Virtual price scale — game_engine's BTC_BASE_PRICE (50,000) sits far above the BTC_MIN/MAX clamp (5–500), so the standalone's market rails to 500 and stays there. Either rescale the base to ~50 like the Discord economy, or raise the clamps to bracket 50k (Matthew's call; a test documents the current railing behavior)
+- [ ] Decide mythic recycle yield — _GOLD_BY_RARITY has no "mythic" entry, so mythic parts fall to the 0.001 common default and recycle for less gold than uncommon parts. Probably wants a ~1.0g entry above legendary's 0.3
 - [ ] Design and implement production chain economy — materials have exclusive crafting uses (overclock modules, upgrade kits etc)
 - [ ] Design and implement tech level progression system (levels 1–5, civilisation arc, stat system influencing material efficiency)
 - [ ] Add Car Collector cog to SocialCreditBot — credit/BTC sink, vintage cars, restoration using recycled materials (lite version of standalone Car Collector)
@@ -121,13 +128,13 @@
 - [x] ~~Onboard Matthew on uploading Python Trash Collector 2 to its own GitHub repo~~ — pushed to https://github.com/MatthewCarven/PythonTrashCollector (2026-04-01)
 - [x] ~~Car Collector 2 Standalone — build and push to GitHub~~ — pushed to https://github.com/MatthewCarven/CarCollector2Standalone (2026-04-02)
 - [ ] Finalise and implement full project hierarchy (see below)
-- [ ] Pre-requisite: extract trash collector logic out of trash_collector.py cog into a standalone game_engine.py before the sync pattern can be established
+- [x] ~~Pre-requisite: extract trash collector logic out of trash_collector.py cog into game_engine.py~~ — verified already satisfied (2026-09-16): the cog imports all game logic (scoring, hardware DB, multipliers, combos, permits, recycling, market model) from game_engine.py; the only cog-side definitions are deliberately Discord-specific (embed colours, emoji guilt ratings, logo URL, CPRM split, credit-scale economy overrides). Item predates the current structure
 - [ ] Pre-requisite: extract car collector logic out of its cogs into a standalone car_engine.py before the sync pattern can be established
-- [ ] Set up game_engine.py sync pattern: SocialCreditBot is source of truth → synced to Trash Collector 2
+- [x] ~~Set up game_engine.py sync pattern: SocialCreditBot is source of truth → synced to Trash Collector 2~~ — verified established (2026-09-16): sync.py covers game_engine.py + mining_db.py, both in sync
 - [ ] Set up car_engine.py sync pattern: SocialCreditBot is source of truth → synced to Car Collector Bot and Car Collector Terminal
 - [x] ~~Create Car Collector 2 Standalone~~ — built and pushed to GitHub (2026-04-02)
 - [x] ~~Replace print() with the `logging` module~~ — done (2026-09-16): root logger with console + rotating bot.log (5MB × 3, UTF-8) configured in main.py; main, backup_manager, lottery and perm_manager converted to per-module loggers; discord.py's own loggers propagate to the same handlers. sync.py and tools/ keep print (CLI output)
-- [ ] Commit a pytest suite for the pure logic — compute_score cases, sell_hardware_bulk atomicity/replay, remove_btc overdraw (the ad-hoc tests from the 2026-08-04 sweep, made permanent) — plus a GitHub Actions workflow running it on push. game_engine.py and mining_db.py are synced to Trash Collector 2, so these tests guard two projects at once (2026-09-16 plan, Tier 2)
+- [x] ~~Commit a pytest suite for the pure logic + GitHub Actions workflow~~ — done (2026-09-16): 86 tests in tests/ covering game_engine (scoring paths/defaults/caps, parsers, CSV data integrity incl. every-row-scores, multipliers, combos, permits, recycling, BTC market), MiningDB (atomic sell replay/partial-abort, wallet overdraw, rig lifecycle, cooldowns) and CreditDB (credits, slush fund, words, lottery, persistent cooldowns). CI runs them on push/PR under Python 3.12 + 3.14
 - [ ] Evaluate `aiosqlite` vs `asyncio.to_thread` for DB layer — SQLite has a connection-per-thread constraint that `to_thread` needs to respect; `aiosqlite` handles this natively. Benchmark both approaches under realistic concurrent load (multiple cogs hitting the DB simultaneously) and decide which pattern to standardise across all projects
 
 ---

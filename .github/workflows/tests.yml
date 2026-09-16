@@ -1,0 +1,23 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.12 = last version with pyfastnoiselite-era wheels, 3.14 = current dev box
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # The tested modules (game_engine, mining_db, database) are stdlib-only,
+      # so the full requirements.txt isn't needed here.
+      - run: pip install pytest
+      - run: python -m pytest tests/ -q
