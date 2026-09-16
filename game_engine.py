@@ -411,14 +411,20 @@ RARITY_PRICE_MULT = {
 }
 
 
-def update_btc_price(current_price: float, last_updated: float) -> float:
+def update_btc_price(current_price: float, last_updated: float, base_price: float = None) -> float:
+    # base_price is the mean-reversion target. Callers whose economy runs at a
+    # different scale than this module's default (e.g. the Discord bot prices
+    # El Virtual around 50 credits) must pass their own — module-level
+    # overrides in the caller cannot reach this function's globals.
+    if base_price is None:
+        base_price = BTC_BASE_PRICE
     elapsed_hours = (time.time() - last_updated) / 3600.0
     if elapsed_hours < 0.01:
         return current_price
     steps = max(1, min(int(elapsed_hours), 168))
     price = current_price
     for _ in range(steps):
-        drift = BTC_REVERSION * (BTC_BASE_PRICE - price)
+        drift = BTC_REVERSION * (base_price - price)
         shock = random.gauss(0, BTC_VOLATILITY * price)
         price += drift + shock
     return round(max(BTC_MIN_PRICE, min(BTC_MAX_PRICE, price)), 2)

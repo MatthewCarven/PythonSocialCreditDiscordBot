@@ -946,7 +946,9 @@ class TrashCollector(commands.Cog):
     def _get_btc_price(self, guild_id):
         """Get the current El Virtual price, applying random-walk updates."""
         price, last_updated = self.mdb.get_btc_price(guild_id)
-        new_price = update_btc_price(price, last_updated)
+        # Pass the Discord-scale reversion target — the engine's default is the
+        # standalone's 50k and would rail the price to the clamp ceiling.
+        new_price = update_btc_price(price, last_updated, BTC_BASE_PRICE)
         self.mdb.set_btc_price(guild_id, new_price)
         return new_price
 
