@@ -3,7 +3,10 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import shutil
 import os
-from datetime import datetime
+import logging
+from datetime import datetime, time, timezone
+
+log = logging.getLogger(__name__)
 
 # Every database the State keeps records in. Backups cover all of them, and
 # restore targets are limited to this list so an upload can't land anywhere else.
@@ -63,13 +66,16 @@ class BackupManager(commands.Cog):
                     pass
 
     # --- AUTOMATED DAILY BACKUP ---
-    @tasks.loop(hours=24)
+    # 00:30 UTC: half an hour after the midnight decree and lottery drawing,
+    # so each backup captures that day's redistribution results. (Anchored to
+    # the clock rather than hours=24, which drifted with every restart.)
+    @tasks.loop(time=time(hour=0, minute=30, tzinfo=timezone.utc))
     async def daily_backup(self):
         copied, errors = self.perform_backup()
         if copied:
-            print(f"📦 [DAILY BACKUP] {len(copied)} database(s) secured in {BACKUP_DIR}/")
+            log.info("📦 [DAILY BACKUP] %d database(s) secured in %s/", len(copied), BACKUP_DIR)
         for err in errors:
-            print(f"🚨 [DAILY BACKUP FAILED] {err}")
+            log.error("🚨 [DAILY BACKUP FAILED] %s", err)
 
     @daily_backup.before_loop
     async def before_daily_backup(self):
@@ -154,7 +160,7 @@ class BackupManager(commands.Cog):
                 color=discord.Color.brand_red(),  # Red for dramatic effect!
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
-            print(f"⚠️ [WARNING] {db_path} was manually restored by {interaction.user.name}.")
+            log.warning("%s was manually restored by %s.", db_path, interaction.user.name)
 
         except Exception as e:
             await interaction.followup.send(f"🚨 **Restore Failed:** {e}", ephemeral=True)

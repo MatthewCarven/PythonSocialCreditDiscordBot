@@ -1,6 +1,9 @@
 import discord
 from discord.ext import commands
 import json
+import logging
+
+log = logging.getLogger(__name__)
 
 class PermManager(commands.Cog):
     def __init__(self, bot):
@@ -46,7 +49,7 @@ class PermManager(commands.Cog):
         # 2. Find the role object for the new tier
         target_role = discord.utils.get(guild.roles, name=new_tier_name)
         if not target_role:
-            print(f"⚠️ [Role Not Found] The role '{new_tier_name}' does not exist in '{guild.name}'. Cannot assign.")
+            log.warning("[Role Not Found] The role '%s' does not exist in '%s'. Cannot assign.", new_tier_name, guild.name)
             return
 
         # 3. Get a list of all tier roles the user currently has
@@ -61,20 +64,20 @@ class PermManager(commands.Cog):
             if current_tier_roles:
                 await member.remove_roles(*current_tier_roles, reason="Social Credit Tier Change")
         except discord.Forbidden:
-            print(f"🚨 [Permissions Error] Bot lacks permissions to remove roles in '{guild.name}'.")
+            log.error("[Permissions Error] Bot lacks permissions to remove roles in '%s'.", guild.name)
             return
         except discord.HTTPException as e:
-            print(f"🚨 [HTTP Error] Failed to remove roles: {e}")
+            log.error("[HTTP Error] Failed to remove roles: %s", e)
             return
             
         # 6. Add the correct new role
         try:
             await member.add_roles(target_role, reason=f"Social Credit score reached {new_score:,.1f}")
-            print(f"✅ Role '{target_role.name}' assigned to {member.display_name} in '{guild.name}'.")
+            log.info("Role '%s' assigned to %s in '%s'.", target_role.name, member.display_name, guild.name)
         except discord.Forbidden:
-            print(f"🚨 [Permissions Error] Bot lacks permissions to add roles in '{guild.name}'.")
+            log.error("[Permissions Error] Bot lacks permissions to add roles in '%s'.", guild.name)
         except discord.HTTPException as e:
-            print(f"🚨 [HTTP Error] Failed to add role: {e}")
+            log.error("[HTTP Error] Failed to add role: %s", e)
 
 async def setup(bot):
     await bot.add_cog(PermManager(bot))

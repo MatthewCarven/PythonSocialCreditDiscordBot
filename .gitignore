@@ -1,6 +1,8 @@
 .env
 __pycache__/
 *.pyc
+*.log
+.command_hash
 *.db
 *.exe
 *.zip

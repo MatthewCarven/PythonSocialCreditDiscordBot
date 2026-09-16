@@ -3,8 +3,11 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import random
 import math
+import logging
 from datetime import datetime, time, timedelta, timezone
 from database import CreditDB
+
+log = logging.getLogger(__name__)
 
 # --- Constants ---
 TICKET_PRICE = 5.0
@@ -116,25 +119,25 @@ class Lottery(commands.Cog):
     # --- Daily Drawing Task ---
     @tasks.loop(time=time(0, 0, tzinfo=timezone.utc)) # Runs at midnight UTC
     async def daily_drawing(self):
-        print("--- Running Daily Lottery Drawing ---")
+        log.info("--- Running Daily Lottery Drawing ---")
         # Iterate over all guilds the bot is in
         for guild in self.bot.guilds:
             guild_id = guild.id
             all_entries = db.get_all_lottery_entries(guild_id)
 
             if not all_entries:
-                print(f"No lottery tickets sold in '{guild.name}'. Skipping draw.")
+                log.info("No lottery tickets sold in '%s'. Skipping draw.", guild.name)
                 continue
 
             # --- Announce winner and distribute prize ---
             output_channel_id = db.get_output_channel(guild_id)
             if not output_channel_id:
-                print(f"No output channel set for '{guild.name}'. Cannot announce lottery winner.")
+                log.warning("No output channel set for '%s'. Cannot announce lottery winner.", guild.name)
                 continue
-            
+
             output_channel = guild.get_channel(output_channel_id)
             if not output_channel:
-                print(f"Could not find output channel for '{guild.name}'.")
+                log.warning("Could not find output channel for '%s'.", guild.name)
                 continue
 
             # Calculate pot and pick winner
@@ -163,13 +166,13 @@ class Lottery(commands.Cog):
 
             try:
                 await output_channel.send(embed=embed)
-                print(f"Announced lottery winner in '{guild.name}'.")
+                log.info("Announced lottery winner in '%s'.", guild.name)
             except discord.Forbidden:
-                print(f"Failed to announce lottery winner in '{guild.name}' due to permissions.")
+                log.error("Failed to announce lottery winner in '%s' due to permissions.", guild.name)
 
             # Clear tickets for the next round
             db.clear_lottery_tickets(guild_id)
-        print("--- Daily Lottery Drawing Complete ---")
+        log.info("--- Daily Lottery Drawing Complete ---")
 
 
 async def setup(bot):

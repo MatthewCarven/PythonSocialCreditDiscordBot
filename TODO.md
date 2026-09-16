@@ -86,8 +86,8 @@
 - [x] ~~Wire ministry logo into decree embed and /get_permit (embed.set_thumbnail)~~ — done (2026-04-02)
 - [ ] Rework /decree as a funded announcement system — dedicated #decrees channel, single edited message (TV-channel style), sorted by credit spend
 - [ ] Give the map editor some love — deliberately deferred until Matthew settles the economy design in his head; revisit once the production-chain/materials economy items below take shape
-- [ ] Persist command cooldowns across restarts — /work, /heist, /coinflip and /daily_ration use in-memory `app_commands.checks.cooldown`, so every bot restart hands out free actions. Generalise the mining_cooldowns DB pattern into CreditDB and share one persistent check (2026-09-16 plan, Tier 1)
-- [ ] Anchor daily_backup to a fixed clock time — lottery and the Ministry decree fire at midnight UTC, but the backup loop is `hours=24` from boot so its firing time drifts with every restart. One-line switch to `tasks.loop(time=...)` (2026-09-16 plan, Tier 1)
+- [x] ~~Persist command cooldowns across restarts~~ — done (2026-09-16): `command_cooldowns` table in CreditDB + `persistent_cooldown` check decorator on /work, /heist, /coinflip, /daily_ration; raises CommandOnCooldown so the existing error handler is unchanged. Verified against a scratch DB incl. cross-restart persistence
+- [x] ~~Anchor daily_backup to a fixed clock time~~ — done (2026-09-16): fires at 00:30 UTC, half an hour after the midnight decree/lottery so each backup captures that day's results. Note: no more automatic backup-on-boot; use /force_backup before risky changes
 - [x] ~~Fix atomicity gap in /sell_all_parts~~ — done (2026-08-04): new `MiningDB.sell_hardware_bulk` deletes parts and credits BTC in one transaction, and aborts the whole sale if the inventory changed since the quote
 - [x] ~~Clean up double-message UX on /scrap_all and /scrap_num~~ — done (2026-08-04): confirm views now edit the original prompt in place via `edit_original_response`; timed-out prompts grey their buttons out
 
@@ -104,7 +104,7 @@
 - [x] ~~`remove_btc` TOCTOU race~~ — check+decrement now a single `UPDATE ... WHERE balance >= ?`; overdraw attempt verified to fail in test
 - [x] ~~Confirm-view timeout UX (expired prompts still look clickable)~~ — views hold their message ref and grey out buttons on timeout
 - [x] ~~Stray `trash3..csv`~~ — moved to old/trash3.csv
-- [ ] Consider smarter slash-command syncing — `tree.sync()` global-syncs on every boot (rate-limit risk, slow propagation); fine at current scale, revisit if the bot joins more guilds or command count grows
+- [x] ~~Consider smarter slash-command syncing~~ — done (2026-09-16): the tree is fingerprinted (sha256 of the command payloads) and global sync only runs when the fingerprint changed since last boot; delete `.command_hash` and restart to force one. Verified sync/skip/re-sync against a real 22-command tree on discord.py 2.7
 
 ### Economy / Game Design — Cross-Project
 - [ ] Design and implement production chain economy — materials have exclusive crafting uses (overclock modules, upgrade kits etc)
@@ -126,7 +126,7 @@
 - [ ] Set up game_engine.py sync pattern: SocialCreditBot is source of truth → synced to Trash Collector 2
 - [ ] Set up car_engine.py sync pattern: SocialCreditBot is source of truth → synced to Car Collector Bot and Car Collector Terminal
 - [x] ~~Create Car Collector 2 Standalone~~ — built and pushed to GitHub (2026-04-02)
-- [ ] Replace print() with the `logging` module — rotating file handler plus discord.py's native logging hookup, so warnings and errors survive the console closing (2026-09-16 plan, Tier 1)
+- [x] ~~Replace print() with the `logging` module~~ — done (2026-09-16): root logger with console + rotating bot.log (5MB × 3, UTF-8) configured in main.py; main, backup_manager, lottery and perm_manager converted to per-module loggers; discord.py's own loggers propagate to the same handlers. sync.py and tools/ keep print (CLI output)
 - [ ] Commit a pytest suite for the pure logic — compute_score cases, sell_hardware_bulk atomicity/replay, remove_btc overdraw (the ad-hoc tests from the 2026-08-04 sweep, made permanent) — plus a GitHub Actions workflow running it on push. game_engine.py and mining_db.py are synced to Trash Collector 2, so these tests guard two projects at once (2026-09-16 plan, Tier 2)
 - [ ] Evaluate `aiosqlite` vs `asyncio.to_thread` for DB layer — SQLite has a connection-per-thread constraint that `to_thread` needs to respect; `aiosqlite` handles this natively. Benchmark both approaches under realistic concurrent load (multiple cogs hitting the DB simultaneously) and decide which pattern to standardise across all projects
 

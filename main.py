@@ -1,6 +1,11 @@
 import discord
 import os
+import sys
+import json
 import asyncio
+import hashlib
+import logging
+import logging.handlers
 from discord.ext import commands
 from dotenv import load_dotenv
 from database import CreditDB
@@ -9,6 +14,36 @@ from messages import random_wrong_channel_message, random_bot_channel_message
 # Anchor all relative paths (.env, cogs/, *.db) to this file's folder,
 # so the bot behaves the same no matter which directory it's launched from.
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+LOG_FILE = "bot.log"
+COMMAND_HASH_FILE = ".command_hash"
+
+
+def _setup_logging():
+    """Console + rotating file. All cogs and discord.py's own loggers
+    propagate to root, so everything lands in bot.log as well."""
+    # Windows consoles often default to cp1252, which can't print the emoji
+    # used in log messages — replace rather than crash.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(fmt)
+    root.addHandler(file_handler)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(fmt)
+    root.addHandler(console)
+
+
+_setup_logging()
+log = logging.getLogger("socialcreditbot")
 
 # Load environment variables
 load_dotenv()
@@ -28,19 +63,44 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         """This runs before the bot connects to Discord."""
-        print("--- Loading Cogs ---")
+        log.info("--- Loading Cogs ---")
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
                 try:
                     # Strip .py and load as a module
                     await self.load_extension(f'cogs.{filename[:-3]}')
-                    print(f'✅ Loaded: {filename}')
-                except Exception as e:
-                    print(f'❌ Failed to load {filename}: {e}')
-        
-        # Sync slash commands globally
+                    log.info("✅ Loaded: %s", filename)
+                except Exception:
+                    log.exception("❌ Failed to load %s", filename)
+
+        await self._sync_commands_if_changed()
+
+    async def _sync_commands_if_changed(self):
+        """Global-sync the command tree only when it changed since last boot.
+
+        Global syncs are rate-limited and slow to propagate, so we fingerprint
+        the registered commands and skip the call when nothing changed.
+        Delete the .command_hash file and restart to force a sync.
+        """
+        try:
+            payload = [cmd.to_dict(self.tree) for cmd in self.tree.get_commands()]
+        except TypeError:  # discord.py < 2.4: to_dict() takes no tree argument
+            payload = [cmd.to_dict() for cmd in self.tree.get_commands()]
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+        previous = None
+        if os.path.exists(COMMAND_HASH_FILE):
+            with open(COMMAND_HASH_FILE) as f:
+                previous = f.read().strip()
+
+        if digest == previous:
+            log.info("Command tree unchanged — skipping global sync.")
+            return
+
         await self.tree.sync()
-        print("--- Syncing Complete ---")
+        with open(COMMAND_HASH_FILE, "w") as f:
+            f.write(digest)
+        log.info("Command tree synced globally (%d top-level commands).", len(payload))
 
     async def on_interaction(self, interaction: discord.Interaction):
         # We only care about slash commands for this check
@@ -65,7 +125,7 @@ class MyBot(commands.Bot):
                     # Announce the penalty in the channel where the infraction occurred
                     await interaction.channel.send(f"🚨 State Violation by {interaction.user.mention}! {random_wrong_channel_message()} **{abs(penalty):,.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
-                    print(f"WARNING: Could not send penalty message in channel '{interaction.channel.name}' due to missing permissions.")
+                    log.warning("Could not send penalty message in channel '%s' due to missing permissions.", interaction.channel.name)
 
     async def on_message(self, message: discord.Message):
         # Ignore messages from bots (including ourselves)
@@ -90,14 +150,13 @@ class MyBot(commands.Bot):
                 try:
                     await message.channel.send(f"🚨 State Violation by {message.author.mention}! {random_bot_channel_message()} **{abs(penalty):,.1f}** credit penalty applied. The fine has been added to the slush fund. New social standing: **{new_score:,.1f}**")
                 except discord.Forbidden:
-                    print(f"WARNING: Could not send penalty message in channel '{message.channel.name}' due to missing permissions.")
+                    log.warning("Could not send penalty message in channel '%s' due to missing permissions.", message.channel.name)
 
         # Ensure prefix commands (if any) still work
         await self.process_commands(message)
 
     async def on_ready(self):
-        print(f'Logged in as {self.user} (ID: {self.user.id})')
-        print('------')
+        log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
 
 bot = MyBot()
 
