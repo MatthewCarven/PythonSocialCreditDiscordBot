@@ -1,4 +1,5 @@
 import sqlite3
+import time
 
 class CreditDB:
     def __init__(self, db_path="social_credit.db"):
@@ -56,6 +57,18 @@ class CreditDB:
                     ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL
+                )
+            """)
+
+            # Persistent per-command cooldowns (survive bot restarts).
+            # Same shape as mining_db's mining_cooldowns table.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS command_cooldowns (
+                    user_id INTEGER,
+                    guild_id INTEGER,
+                    command TEXT,
+                    last_used REAL NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, guild_id, command)
                 )
             """)
 
@@ -186,4 +199,23 @@ class CreditDB:
     def clear_lottery_tickets(self, guild_id):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM lottery_tickets WHERE guild_id = ?", (guild_id,))
+            conn.commit()
+
+    # --- Command Cooldowns (persistent across restarts) ---
+    def get_cooldown(self, user_id, guild_id, command):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT last_used FROM command_cooldowns WHERE user_id = ? AND guild_id = ? AND command = ?",
+                (user_id, guild_id, command),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else 0.0
+
+    def set_cooldown(self, user_id, guild_id, command):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO command_cooldowns (user_id, guild_id, command, last_used) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id, guild_id, command) DO UPDATE SET last_used = EXCLUDED.last_used""",
+                (user_id, guild_id, command, time.time()),
+            )
             conn.commit()

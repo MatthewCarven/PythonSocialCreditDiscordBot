@@ -5,12 +5,31 @@ import math
 import sqlite3
 import random
 import json
+import time
 from database import CreditDB # Imports your DB class
 from mining_db import MiningDB
 from messages import random_fine_message, random_banned_word_message, random_earn_message, random_leaderboard_message
 
 db = CreditDB()
 mdb = MiningDB()
+
+
+def persistent_cooldown(command_name: str, seconds: float):
+    """DB-backed replacement for app_commands.checks.cooldown.
+
+    The decorator version keeps its buckets in memory, so every bot restart
+    hands out free uses. This check reads/writes the command_cooldowns table
+    instead, and raises CommandOnCooldown so the existing
+    cog_app_command_error handler formats the message as before.
+    """
+    async def predicate(interaction: discord.Interaction):
+        last = db.get_cooldown(interaction.user.id, interaction.guild_id, command_name)
+        remaining = seconds - (time.time() - last)
+        if remaining > 0:
+            raise app_commands.CommandOnCooldown(app_commands.Cooldown(1, seconds), remaining)
+        db.set_cooldown(interaction.user.id, interaction.guild_id, command_name)
+        return True
+    return app_commands.check(predicate)
 
 
 
@@ -479,7 +498,7 @@ class SocialCredit(commands.Cog):
 
     @app_commands.command(name="heist", description="Attempt to steal credits from another citizen. High risk, high reward.")
     @app_commands.describe(target="The citizen you want to steal from.")
-    @app_commands.checks.cooldown(1, 3600, key=lambda i: (i.guild_id, i.user.id))
+    @persistent_cooldown("heist", 3600)
     async def heist(self, interaction: discord.Interaction, target: discord.Member):
         heister = interaction.user
         guild_id = interaction.guild.id
@@ -578,7 +597,7 @@ class SocialCredit(commands.Cog):
         app_commands.Choice(name="Heads", value="heads"),
         app_commands.Choice(name="Tails", value="tails"),
     ])
-    @app_commands.checks.cooldown(1, 3600, key=lambda i: (i.guild_id, i.user.id))
+    @persistent_cooldown("coinflip", 3600)
     async def coinflip(self, interaction: discord.Interaction, amount: app_commands.Range[float, 1.0, 500.0], guess: app_commands.Choice[str]):
         user = interaction.user
         guild_id = interaction.guild.id
@@ -718,7 +737,7 @@ class SocialCredit(commands.Cog):
 
     # --- DAILY RATION COMMAND ---
     @app_commands.command(name="daily_ration", description="Claim your daily allowance of Social Credit from the State.")
-    @app_commands.checks.cooldown(1, 86400, key=lambda i: (i.guild_id, i.user.id)) # 1 use per 86400 seconds (24 hours)
+    @persistent_cooldown("daily_ration", 86400)  # once per 24 hours
     async def daily_ration(self, interaction: discord.Interaction):
         # Grant a random amount between 1.0 and 5.0 credits
         amount = round(random.uniform(1.0, 5.0), 1)
@@ -741,7 +760,7 @@ class SocialCredit(commands.Cog):
     
     # The main work command (1 hour cooldown)
     @app_commands.command(name="work", description="Perform major labor for the State.")
-    @app_commands.checks.cooldown(1, 3600, key=lambda i: (i.guild_id, i.user.id))
+    @persistent_cooldown("work", 3600)
     async def work(self, interaction: discord.Interaction):
         await self.trigger_work_scenario(interaction, task_name="work")
 
